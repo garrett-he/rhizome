@@ -1,21 +1,23 @@
 import { render, screen } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { describe, expect, it } from "vitest";
-import { routes } from "./routes";
+import { describe, expect, it, vi } from "vitest";
+import { App } from "./App";
 
-function renderWithRouter(initialEntries = ["/"]) {
-    const router = createMemoryRouter(routes, { initialEntries });
-    return render(<RouterProvider router={router} />);
-}
+vi.mock("@tauri-apps/api/core", () => ({
+    invoke: vi.fn().mockResolvedValue({
+        home_dir: "C:\\Users\\Test",
+        profiles: { current: null, vaults: [] },
+    }),
+}));
 
 describe("App", () => {
     it("renders without errors", () => {
-        const { container } = renderWithRouter();
+        const { container } = render(<App />);
         expect(container).toBeTruthy();
     });
 
-    it("renders the home page heading", () => {
-        renderWithRouter();
-        expect(screen.getByText("Welcome to Tauri + React")).toBeTruthy();
+    it("renders the onboarding page", async () => {
+        render(<App />);
+        expect(await screen.findByText("创建新知识库")).toBeTruthy();
+        expect(screen.getByText("rhizome")).toBeTruthy();
     });
 });
