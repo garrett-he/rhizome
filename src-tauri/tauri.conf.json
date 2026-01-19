@@ -13,10 +13,10 @@
         "windows": [
             {
                 "title": "rhizome",
-                "width": 680,
-                "height": 720,
-                "minWidth": 560,
-                "minHeight": 560
+                "width": 1280,
+                "height": 800,
+                "minWidth": 960,
+                "minHeight": 640
             }
         ],
         "security": {

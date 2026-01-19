@@ -1,5 +1,6 @@
 import { ChevronRight, Folder, FolderOpen, FolderSearch, Network, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useProfiles } from "@/hooks/useProfiles";
@@ -14,6 +15,7 @@ function joinVaultPath(homeDir: string): string {
 }
 
 export function OnboardingPage() {
+    const navigate = useNavigate();
     const { homeDir, profiles, loading, error, createVault, openVault, pickDirectory } = useProfiles();
     const [path, setPath] = useState("");
     const [busy, setBusy] = useState(false);
@@ -36,22 +38,28 @@ export function OnboardingPage() {
     const handleInit = useCallback(async () => {
         setBusy(true);
         try {
-            await createVault(path.trim());
+            const ok = await createVault(path.trim());
+            if (ok) {
+                navigate("/", { replace: true });
+            }
         } finally {
             setBusy(false);
         }
-    }, [createVault, path]);
+    }, [createVault, navigate, path]);
 
     const handleOpenVault = useCallback(
         async (vaultPath: string) => {
             setBusy(true);
             try {
-                await openVault(vaultPath);
+                const ok = await openVault(vaultPath);
+                if (ok) {
+                    navigate("/", { replace: true });
+                }
             } finally {
                 setBusy(false);
             }
         },
-        [openVault],
+        [navigate, openVault],
     );
 
     const handleOpenOther = useCallback(async () => {

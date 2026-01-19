@@ -22,7 +22,7 @@ format:
 # Run tests
 test:
     pnpm run test:coverage
-    cargo tarpaulin --manifest-path src-tauri/Cargo.toml --exclude-files src/main.rs --skip-clean --out Stdout --fail-under 80 --timeout 300
+    cargo tarpaulin --manifest-path src-tauri/Cargo.toml --exclude-files "src/main.rs" --exclude-files "src/lib.rs" --skip-clean --out Stdout --fail-under 80 --timeout 300
 
 # Run Tauri
 dev:

@@ -1,11 +1,20 @@
+mod db;
 mod profiles;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use dirs::home_dir;
 
 fn resolve_home() -> Result<PathBuf, String> {
     home_dir().ok_or_else(|| "无法获取用户主目录".to_string())
+}
+
+fn current_vault() -> Result<PathBuf, String> {
+    let profiles = profiles::load(&resolve_home()?);
+    profiles
+        .current
+        .map(PathBuf::from)
+        .ok_or_else(|| "未选择知识库".to_string())
 }
 
 #[tauri::command]
@@ -23,11 +32,21 @@ fn open_vault(path: String) -> Result<profiles::Profiles, String> {
     profiles::open_vault(&resolve_home()?, &path)
 }
 
+#[tauri::command]
+fn get_overview() -> Result<db::Overview, String> {
+    db::get_overview(Path::new(&current_vault()?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_profiles, create_vault, open_vault])
+        .invoke_handler(tauri::generate_handler![
+            get_profiles,
+            create_vault,
+            open_vault,
+            get_overview
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

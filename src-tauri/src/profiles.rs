@@ -84,6 +84,7 @@ pub fn create_vault(home_dir: &Path, path: &str) -> Result<Profiles, String> {
     if !target.exists() {
         fs::create_dir_all(target).map_err(|e| format!("创建目录失败: {e}"))?;
     }
+    crate::db::ensure_db(target)?;
     let mut profiles = load(home_dir);
     upsert_vault(&mut profiles, trimmed);
     save(home_dir, &profiles)?;
@@ -99,6 +100,7 @@ pub fn open_vault(home_dir: &Path, path: &str) -> Result<Profiles, String> {
     if !target.is_dir() {
         return Err(format!("路径不是目录: {trimmed}"));
     }
+    crate::db::ensure_db(target)?;
     let mut profiles = load(home_dir);
     upsert_vault(&mut profiles, trimmed);
     save(home_dir, &profiles)?;
@@ -193,8 +195,9 @@ mod tests {
         assert_eq!(profiles.current.as_deref(), Some(path));
         assert_eq!(load(tmp.path()), profiles);
 
-        // 目录内不写入任何内容
-        assert_eq!(fs::read_dir(&vault).unwrap().count(), 0);
+        // 目录内仅创建 rhizome.db，不写入其他内容
+        assert!(vault.join("rhizome.db").is_file());
+        assert_eq!(fs::read_dir(&vault).unwrap().count(), 1);
     }
 
     #[test]
@@ -242,6 +245,20 @@ mod tests {
         assert_eq!(profiles.current.as_deref(), Some(vault_b.to_str().unwrap()));
         assert_eq!(profiles.vaults[0].path, vault_b.to_str().unwrap());
         assert_eq!(load(tmp.path()), profiles);
+    }
+
+    #[test]
+    fn test_open_vault_creates_missing_db_idempotently() {
+        let tmp = setup();
+        let vault = tmp.path().join("legacy");
+        fs::create_dir_all(&vault).unwrap();
+        assert!(!vault.join("rhizome.db").exists());
+
+        open_vault(tmp.path(), vault.to_str().unwrap()).unwrap();
+        assert!(vault.join("rhizome.db").is_file());
+
+        open_vault(tmp.path(), vault.to_str().unwrap()).unwrap();
+        assert_eq!(fs::read_dir(&vault).unwrap().count(), 1);
     }
 
     #[test]

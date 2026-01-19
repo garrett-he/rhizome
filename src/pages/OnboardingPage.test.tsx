@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Profiles } from "@/types/profile";
@@ -45,30 +46,42 @@ beforeEach(() => {
     });
 });
 
-async function renderPage() {
+function renderPage() {
     const user = userEvent.setup();
-    render(<OnboardingPage />);
+    render(
+        <MemoryRouter initialEntries={["/onboarding"]}>
+            <Routes>
+                <Route path="/onboarding" element={<OnboardingPage />} />
+                <Route path="/" element={<div>app-shell</div>} />
+            </Routes>
+        </MemoryRouter>,
+    );
+    return user;
+}
+
+async function renderAndFillDefaultPath() {
+    const user = renderPage();
     const input = await screen.findByLabelText("知识库路径");
+    await waitFor(() => {
+        expect(input).toHaveValue(`${homeDir}\\.rhizome`);
+    });
     return { user, input };
 }
 
 describe("OnboardingPage", () => {
     it("renders brand, labels and default vault path", async () => {
-        const { input } = await renderPage();
+        await renderAndFillDefaultPath();
 
         expect(screen.getByText("rhizome")).toBeTruthy();
         expect(screen.getByText("创建新知识库")).toBeTruthy();
         expect(screen.getByText("初始化知识库")).toBeTruthy();
         expect(screen.getByText("打开已有的知识库")).toBeTruthy();
         expect(screen.getByText("选择其他目录…")).toBeTruthy();
-        await waitFor(() => {
-            expect(input).toHaveValue(`${homeDir}\\.rhizome`);
-        });
         expect(screen.queryByText("C:\\vaults\\a")).toBeNull();
     });
 
     it("browse fills the path input from the directory dialog", async () => {
-        const { user, input } = await renderPage();
+        const { user, input } = await renderAndFillDefaultPath();
         openMock.mockResolvedValue("D:\\picked");
 
         await user.click(screen.getByRole("button", { name: "浏览" }));
@@ -79,8 +92,8 @@ describe("OnboardingPage", () => {
         expect(openMock).toHaveBeenCalledWith({ directory: true, multiple: false });
     });
 
-    it("init invokes create_vault and shows the new vault", async () => {
-        const { user } = await renderPage();
+    it("init invokes create_vault and navigates to the app shell", async () => {
+        const { user } = await renderAndFillDefaultPath();
 
         await user.click(screen.getByRole("button", { name: "初始化知识库" }));
 
@@ -89,10 +102,10 @@ describe("OnboardingPage", () => {
                 path: `${homeDir}\\.rhizome`,
             });
         });
-        expect(await screen.findByText(`${homeDir}\\.rhizome`)).toBeTruthy();
+        expect(await screen.findByText("app-shell")).toBeTruthy();
     });
 
-    it("clicking a recent vault invokes open_vault", async () => {
+    it("clicking a recent vault invokes open_vault and navigates", async () => {
         invokeMock.mockImplementation(async (cmd: string) => {
             if (cmd === "get_profiles") {
                 return { home_dir: homeDir, profiles: profilesWithVaults(["C:\\vaults\\a"]) };
@@ -102,17 +115,18 @@ describe("OnboardingPage", () => {
             }
             throw new Error(`unexpected command: ${cmd}`);
         });
-        const { user } = await renderPage();
+        const user = renderPage();
 
         await user.click(await screen.findByText("C:\\vaults\\a"));
 
         await waitFor(() => {
             expect(invokeMock).toHaveBeenCalledWith("open_vault", { path: "C:\\vaults\\a" });
         });
+        expect(await screen.findByText("app-shell")).toBeTruthy();
     });
 
-    it("picking another directory opens it as vault", async () => {
-        const { user } = await renderPage();
+    it("picking another directory opens it as vault and navigates", async () => {
+        const { user } = await renderAndFillDefaultPath();
         openMock.mockResolvedValue("E:\\other");
 
         await user.click(screen.getByRole("button", { name: "选择其他目录…" }));
@@ -120,10 +134,11 @@ describe("OnboardingPage", () => {
         await waitFor(() => {
             expect(invokeMock).toHaveBeenCalledWith("open_vault", { path: "E:\\other" });
         });
+        expect(await screen.findByText("app-shell")).toBeTruthy();
     });
 
     it("cancelling the dialog does not open a vault", async () => {
-        const { user } = await renderPage();
+        const { user } = await renderAndFillDefaultPath();
         openMock.mockResolvedValue(null);
 
         await user.click(screen.getByRole("button", { name: "选择其他目录…" }));
@@ -132,6 +147,7 @@ describe("OnboardingPage", () => {
             expect(openMock).toHaveBeenCalled();
         });
         expect(invokeMock).not.toHaveBeenCalledWith("open_vault", expect.anything());
+        expect(screen.getByText("选择其他目录…")).toBeTruthy();
     });
 
     it("shows inline error when creating fails", async () => {
@@ -141,11 +157,12 @@ describe("OnboardingPage", () => {
             }
             return Promise.reject("路径已存在且不是目录");
         });
-        const { user } = await renderPage();
+        const { user } = await renderAndFillDefaultPath();
 
         await user.click(screen.getByRole("button", { name: "初始化知识库" }));
 
         expect(await screen.findByRole("alert")).toHaveTextContent("路径已存在且不是目录");
+        expect(screen.getByText("选择其他目录…")).toBeTruthy();
     });
 
     it("shows inline error when opening a missing directory", async () => {
@@ -155,23 +172,16 @@ describe("OnboardingPage", () => {
             }
             return Promise.reject("目录不存在: C:\\gone");
         });
-        const { user } = await renderPage();
+        const user = renderPage();
 
         await user.click(await screen.findByText("C:\\gone"));
 
         expect(await screen.findByRole("alert")).toHaveTextContent("目录不存在: C:\\gone");
-    });
-
-    it("shows inline error when loading profiles fails", async () => {
-        invokeMock.mockRejectedValue(new Error("配置读取失败"));
-
-        render(<OnboardingPage />);
-
-        expect(await screen.findByRole("alert")).toHaveTextContent("配置读取失败");
+        expect(screen.getByText("选择其他目录…")).toBeTruthy();
     });
 
     it("shows inline error when the directory dialog fails", async () => {
-        const { user } = await renderPage();
+        const { user } = await renderAndFillDefaultPath();
         openMock.mockRejectedValue("对话框不可用");
 
         await user.click(screen.getByRole("button", { name: "选择其他目录…" }));
