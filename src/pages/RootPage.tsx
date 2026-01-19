@@ -1,10 +1,9 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, Outlet } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { useProfiles } from "@/hooks/useProfiles";
-import { OverviewPage } from "@/pages/OverviewPage";
 
 export function RootPage() {
-    const { profiles, loading } = useProfiles();
+    const { profiles, loading, openVault } = useProfiles();
 
     if (loading) {
         return null;
@@ -13,8 +12,8 @@ export function RootPage() {
         return <Navigate to="/onboarding" replace />;
     }
     return (
-        <AppShell vaultPath={profiles.current}>
-            <OverviewPage />
+        <AppShell vaultPath={profiles.current} vaults={profiles.vaults} onSwitchVault={(path) => void openVault(path)}>
+            <Outlet />
         </AppShell>
     );
 }

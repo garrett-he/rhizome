@@ -28,8 +28,7 @@ pub fn db_path(vault: &Path) -> PathBuf {
     vault.join(DB_FILE)
 }
 
-/// 打开/创建 {vault}/rhizome.db 并确保 settings KV 表存在（幂等）。
-/// 文档/分类等表由后续迭代按需添加。
+/// 打开/创建 {vault}/rhizome.db 并确保 settings 与 documents 表存在（幂等）。
 pub fn ensure_db(vault: &Path) -> Result<(), String> {
     let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     conn.execute_batch(
@@ -39,16 +38,19 @@ pub fn ensure_db(vault: &Path) -> Result<(), String> {
         );",
     )
     .map_err(|e| format!("初始化数据库失败: {e}"))?;
+    crate::documents::ensure_table(&conn)?;
     Ok(())
 }
 
-/// 总览统计。文档类计数待 documents 表落地后接入（当前恒为 0）；
-/// 存储占用为 vault 目录的实时大小（含 rhizome.db）。
+/// 总览统计。文档计数来自 documents 表真实查询（failed 恒 0，最小表无 last_error 列）；
+/// 存储占用为 vault 目录的实时大小（含 rhizome.db 与 blobs）。
 pub fn get_overview(vault: &Path) -> Result<Overview, String> {
+    let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let (total_documents, indexed_documents, pending_documents) = crate::documents::counts(&conn);
     Ok(Overview {
-        total_documents: 0,
-        indexed_documents: 0,
-        pending_documents: 0,
+        total_documents,
+        indexed_documents,
+        pending_documents,
         failed_documents: 0,
         storage_bytes: dir_size(vault),
         categories: Vec::new(),

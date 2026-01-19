@@ -31,6 +31,8 @@ export default defineConfig({
         setupFiles: ["./src/test-setup.ts"],
         coverage: {
             provider: "v8",
+            // IDE 安全删除钩子会拦截 coverage 目录清理，改为不预清理（报告每次全量重写）
+            clean: false,
             include: ["src/**/*.ts", "src/**/*.tsx"],
             exclude: ["src/**/*.d.ts", "src/main.tsx", "src/types/**", "src/__mocks__/**", "src/components/ui/**"],
             thresholds: {

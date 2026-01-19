@@ -1,4 +1,5 @@
 mod db;
+mod documents;
 mod profiles;
 
 use std::path::{Path, PathBuf};
@@ -37,6 +38,16 @@ fn get_overview() -> Result<db::Overview, String> {
     db::get_overview(Path::new(&current_vault()?))
 }
 
+#[tauri::command]
+fn add_documents(paths: Vec<String>) -> Result<documents::AddSummary, String> {
+    Ok(documents::add_batch(Path::new(&current_vault()?), &paths))
+}
+
+#[tauri::command]
+fn list_documents() -> Result<Vec<documents::DocumentSummary>, String> {
+    documents::list(Path::new(&current_vault()?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -45,7 +56,9 @@ pub fn run() {
             get_profiles,
             create_vault,
             open_vault,
-            get_overview
+            get_overview,
+            add_documents,
+            list_documents
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

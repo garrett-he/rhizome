@@ -1,20 +1,11 @@
-import { RefreshCw, Upload } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { CategoryCard } from "@/components/overview/CategoryCard";
 import { PendingCard } from "@/components/overview/PendingCard";
 import { PipelineCard } from "@/components/overview/PipelineCard";
 import { Button } from "@/components/ui/button";
 import { useOverview } from "@/hooks/useOverview";
+import { formatBytes } from "@/lib/format";
 import type { Overview } from "@/types/overview";
-
-function formatBytes(bytes: number): string {
-    if (bytes <= 0) {
-        return "0 B";
-    }
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-    const value = bytes / 1024 ** index;
-    return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
-}
 
 function MetricCard({ label, value }: { label: string; value: string }) {
     return (
@@ -54,10 +45,6 @@ export function OverviewPage() {
                     <Button type="button" variant="outline" disabled={loading} onClick={() => void refresh()}>
                         <RefreshCw aria-hidden className="h-4 w-4" />
                         刷新
-                    </Button>
-                    <Button type="button" disabled title="文档导入将在后续版本提供">
-                        <Upload aria-hidden className="h-4 w-4" />
-                        导入文档
                     </Button>
                 </div>
             </div>
