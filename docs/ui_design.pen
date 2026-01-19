@@ -1,5 +1,5 @@
 {
-  "version": "2.14",
+  "version": "2.21",
   "children": [
     {
       "type": "frame",
@@ -34,6 +34,7 @@
             "right": 1
           },
           "strokeAlignment": "inner",
+          "strokeLinejoin": "round",
           "layout": "vertical",
           "gap": 16,
           "padding": 8,
@@ -841,6 +842,7 @@
             "bottom": 1
           },
           "strokeAlignment": "inner",
+          "strokeLinejoin": "round",
           "layout": "vertical",
           "children": [
             {
@@ -1585,8 +1587,7 @@
                 "x": 0,
                 "y": 2
               },
-              "blur": 3.5,
-              "spread": -1
+              "blur": 3.5
             },
             {
               "type": "shadow",
@@ -1596,8 +1597,7 @@
                 "x": 0,
                 "y": 4
               },
-              "blur": 5.25,
-              "spread": -1
+              "blur": 5.25
             }
           ],
           "gap": 8,
@@ -1659,8 +1659,7 @@
                         "x": 0,
                         "y": 4
                       },
-                      "blur": 5.25,
-                      "spread": -2
+                      "blur": 5.25
                     },
                     {
                       "type": "shadow",
@@ -1670,8 +1669,7 @@
                         "x": 0,
                         "y": 10
                       },
-                      "blur": 13.125,
-                      "spread": -3
+                      "blur": 13.125
                     }
                   ]
                 }
@@ -1949,7 +1947,7 @@
           "fill": {
             "type": "image",
             "enabled": true,
-            "mode": "fill"
+            "mode": "cover"
           },
           "name": "Avatar/Image",
           "descendants": {
@@ -2519,8 +2517,7 @@
                 "x": 0,
                 "y": 2
               },
-              "blur": 3.5,
-              "spread": -1
+              "blur": 3.5
             },
             {
               "type": "shadow",
@@ -2530,8 +2527,7 @@
                 "x": 0,
                 "y": 4
               },
-              "blur": 5.25,
-              "spread": -1
+              "blur": 5.25
             }
           ],
           "layout": "vertical",
@@ -3874,6 +3870,7 @@
             "bottom": 1
           },
           "strokeAlignment": "inner",
+          "strokeLinejoin": "round",
           "alignItems": "center"
         },
         {
@@ -11005,7 +11002,7 @@
       "name": "08 设置",
       "clip": true,
       "width": 1440,
-      "height": 900,
+      "height": 1181,
       "fill": "$--background",
       "children": [
         {
@@ -11212,7 +11209,6 @@
           "name": "Main",
           "clip": true,
           "width": "fill_container",
-          "height": "fill_container",
           "layout": "vertical",
           "gap": 20,
           "padding": 32,
@@ -11235,18 +11231,6 @@
               "width": "fit_content",
               "children": [
                 {
-                  "id": "eCVH7",
-                  "type": "ref",
-                  "ref": "coMmv",
-                  "name": "Tab LLM",
-                  "descendants": {
-                    "qYQHc": {
-                      "content": "LLM",
-                      "fontFamily": "Noto Sans SC"
-                    }
-                  }
-                },
-                {
                   "id": "JLEfO",
                   "type": "ref",
                   "ref": "QY0Ka",
@@ -11259,13 +11243,13 @@
                   }
                 },
                 {
-                  "id": "PcNAL",
+                  "id": "eCVH7",
                   "type": "ref",
-                  "ref": "QY0Ka",
-                  "name": "Tab 抽取",
+                  "ref": "coMmv",
+                  "name": "Tab LLM",
                   "descendants": {
                     "qYQHc": {
-                      "content": "抽取",
+                      "content": "LLM",
                       "fontFamily": "Noto Sans SC"
                     }
                   }
@@ -11293,18 +11277,6 @@
                       "fontFamily": "Noto Sans SC"
                     }
                   }
-                },
-                {
-                  "id": "TiEzu",
-                  "type": "ref",
-                  "ref": "QY0Ka",
-                  "name": "Tab 存储",
-                  "descendants": {
-                    "qYQHc": {
-                      "content": "存储",
-                      "fontFamily": "Noto Sans SC"
-                    }
-                  }
                 }
               ]
             },
@@ -11316,6 +11288,120 @@
               "layout": "vertical",
               "gap": 20,
               "children": [
+                {
+                  "id": "myKvc",
+                  "type": "ref",
+                  "ref": "pcGlv",
+                  "name": "Card 嵌入模型",
+                  "width": "fill_container",
+                  "x": 0,
+                  "y": 0,
+                  "descendants": {
+                    "CgJv7": {
+                      "type": "frame",
+                      "id": "cqBcE",
+                      "name": "Head",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "padding": [
+                        16,
+                        24
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "hGLZ6",
+                          "name": "Title",
+                          "fill": "$--card-foreground",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "嵌入模型",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 16,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Sixsr",
+                          "name": "Desc",
+                          "fill": "$--muted-foreground",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "向量维度不同不可比较：切换后将重建 chunks_vec 并清空全部既有切片，需要重新索引。",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    "frWPV": {
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": 24,
+                      "height": "fit_content",
+                      "children": [
+                        {
+                          "id": "A162I",
+                          "type": "ref",
+                          "ref": "A4VOm",
+                          "name": "Model Select",
+                          "width": "fill_container",
+                          "descendants": {
+                            "c8G05": {
+                              "enabled": false
+                            },
+                            "V1STL": {
+                              "content": "BAAI/bge-small-zh-v1.5（384 维）",
+                              "fontFamily": "Noto Sans SC"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "MP5pI",
+                          "name": "Actions",
+                          "width": "fill_container",
+                          "gap": 12,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "PJbiT",
+                              "type": "ref",
+                              "ref": "C10zH",
+                              "name": "Btn reindex",
+                              "descendants": {
+                                "HDFDp": {
+                                  "icon": "refresh-cw"
+                                },
+                                "poRwU": {
+                                  "content": "重新索引全部文档",
+                                  "fontFamily": "Noto Sans SC",
+                                  "fontSize": 13
+                                }
+                              }
+                            },
+                            {
+                              "id": "xBqm2",
+                              "type": "ref",
+                              "ref": "WuUMk",
+                              "name": "Badge",
+                              "descendants": {
+                                "zHpCv": {
+                                  "content": "当前 96 篇已索引",
+                                  "fontFamily": "Noto Sans SC"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "bvhSM": {
+                      "enabled": false
+                    }
+                  }
+                },
                 {
                   "id": "SBk5z",
                   "type": "ref",
@@ -11342,22 +11428,10 @@
                           "fill": "$--card-foreground",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "LLM 配置",
+                          "content": "LLM",
                           "fontFamily": "Noto Sans SC",
                           "fontSize": 16,
                           "fontWeight": "500"
-                        },
-                        {
-                          "type": "text",
-                          "id": "MULNW",
-                          "name": "Desc",
-                          "fill": "$--muted-foreground",
-                          "textGrowth": "fixed-width",
-                          "width": "fill_container",
-                          "content": "用于文档编译（OpenAI 兼容接口）",
-                          "fontFamily": "Noto Sans SC",
-                          "fontSize": 13,
-                          "fontWeight": "normal"
                         }
                       ]
                     },
@@ -11462,18 +11536,209 @@
                               }
                             }
                           ]
-                        },
+                        }
+                      ]
+                    },
+                    "bvhSM": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "qsX4i",
+                  "type": "ref",
+                  "ref": "pcGlv",
+                  "name": "Card 提示词",
+                  "width": "fill_container",
+                  "x": 0,
+                  "y": 477.6095416471684,
+                  "descendants": {
+                    "CgJv7": {
+                      "type": "frame",
+                      "id": "Ttscz",
+                      "name": "Head",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "padding": [
+                        16,
+                        24
+                      ],
+                      "children": [
                         {
                           "type": "text",
-                          "id": "L2RGg",
-                          "name": "Note",
-                          "fill": "$--muted-foreground",
+                          "id": "TR5To",
+                          "name": "Title",
+                          "fill": "$--card-foreground",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "未配置 LLM 时：入库、索引、检索仍可用，仅编译不可用。",
+                          "content": "提示词",
                           "fontFamily": "Noto Sans SC",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
+                          "fontSize": 16,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    "frWPV": {
+                      "type": "frame",
+                      "id": "lJy3X",
+                      "name": "Prompt List",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "padding": 24,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "K88QeG",
+                          "name": "List Header",
+                          "width": "fill_container",
+                          "gap": 12,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tKxKP",
+                              "name": "H file",
+                              "fill": "$--muted-foreground",
+                              "textGrowth": "fixed-width",
+                              "width": 220,
+                              "content": "文件名",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "WSF2f",
+                              "name": "H desc",
+                              "fill": "$--muted-foreground",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "说明",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "n6XWzP",
+                              "name": "H ops",
+                              "fill": "$--muted-foreground",
+                              "textGrowth": "fixed-width",
+                              "width": 170,
+                              "content": "操作",
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "WIreQ",
+                          "name": "Row docs_compile",
+                          "width": "fill_container",
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            10,
+                            0
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "zN2lD",
+                              "name": "File Cell",
+                              "width": 220,
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "mfDoH",
+                                  "name": "File",
+                                  "fill": "$--card-foreground",
+                                  "content": "docs_compile",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "id": "wC75e",
+                                  "type": "ref",
+                                  "ref": "WuUMk",
+                                  "name": "Badge",
+                                  "descendants": {
+                                    "zHpCv": {
+                                      "content": "已定制",
+                                      "fontFamily": "Noto Sans SC"
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "vY0vm",
+                              "name": "Desc Cell",
+                              "fill": "$--muted-foreground",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "文档编译：生成 YAML 元数据（title / summary / language / tags）与清洗后的 Markdown 正文",
+                              "lineHeight": 1.5,
+                              "fontFamily": "Noto Sans SC",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "iIbHE",
+                              "name": "Ops Cell",
+                              "width": 170,
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "id": "QiQHH",
+                                  "type": "ref",
+                                  "ref": "3f2VW",
+                                  "name": "Btn edit",
+                                  "descendants": {
+                                    "AeXMI": {
+                                      "enabled": false
+                                    },
+                                    "UZfKV": {
+                                      "content": "编辑",
+                                      "fontFamily": "Noto Sans SC",
+                                      "fontSize": 13
+                                    }
+                                  }
+                                },
+                                {
+                                  "id": "gaPwq",
+                                  "type": "ref",
+                                  "ref": "3f2VW",
+                                  "name": "Btn reset",
+                                  "descendants": {
+                                    "AeXMI": {
+                                      "enabled": false
+                                    },
+                                    "UZfKV": {
+                                      "content": "恢复默认",
+                                      "fontFamily": "Noto Sans SC",
+                                      "fontSize": 13
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          ]
                         }
                       ]
                     },
@@ -11512,18 +11777,6 @@
                           "fontFamily": "Noto Sans SC",
                           "fontSize": 16,
                           "fontWeight": "500"
-                        },
-                        {
-                          "type": "text",
-                          "id": "IFnmC",
-                          "name": "Desc",
-                          "fill": "$--muted-foreground",
-                          "textGrowth": "fixed-width",
-                          "width": "fill_container",
-                          "content": "以 stdio 方式向 Claude Desktop 等 LLM 客户端提供只读检索（search / list_documents / get_document）",
-                          "fontFamily": "Noto Sans SC",
-                          "fontSize": 13,
-                          "fontWeight": "normal"
                         }
                       ]
                     },
@@ -11559,26 +11812,10 @@
                               "fill": "$--card-foreground",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "运行中（stdio）· 数据库只读打开",
+                              "content": "运行中",
                               "fontFamily": "Noto Sans SC",
                               "fontSize": 14,
                               "fontWeight": "normal"
-                            },
-                            {
-                              "id": "X440a",
-                              "type": "ref",
-                              "ref": "C10zH",
-                              "name": "Btn stop",
-                              "descendants": {
-                                "HDFDp": {
-                                  "icon": "square"
-                                },
-                                "poRwU": {
-                                  "content": "停止",
-                                  "fontFamily": "Noto Sans SC",
-                                  "fontSize": 13
-                                }
-                              }
                             }
                           ]
                         },
@@ -11600,85 +11837,6 @@
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
                               "content": "{\n  \"mcpServers\": {\n    \"rhizome\": {\n      \"command\": \"rhizome\",\n      \"args\": [\"mcp\", \"--store-path\", \"~/.rhizome\"]\n    }\n  }\n}",
-                              "lineHeight": 1.6,
-                              "fontFamily": "JetBrains Mono",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "JqD7r",
-                          "name": "Playground Row",
-                          "width": "fill_container",
-                          "gap": 12,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "id": "gMj2P",
-                              "type": "ref",
-                              "ref": "A4VOm",
-                              "name": "Tool Select",
-                              "width": 180,
-                              "descendants": {
-                                "c8G05": {
-                                  "enabled": false
-                                },
-                                "V1STL": {
-                                  "content": "search",
-                                  "fontFamily": "JetBrains Mono"
-                                }
-                              }
-                            },
-                            {
-                              "id": "J75MK",
-                              "type": "ref",
-                              "ref": "fEUdI",
-                              "name": "Query Input",
-                              "width": "fill_container",
-                              "descendants": {
-                                "SDRKn": {
-                                  "content": "query：服务拆分",
-                                  "fontFamily": "Noto Sans SC"
-                                }
-                              }
-                            },
-                            {
-                              "id": "dnZMw",
-                              "type": "ref",
-                              "ref": "VSnC2",
-                              "name": "Btn run",
-                              "descendants": {
-                                "8jVfJ": {
-                                  "enabled": false
-                                },
-                                "8tnXG": {
-                                  "content": "执行",
-                                  "fontFamily": "Noto Sans SC"
-                                }
-                              }
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "t4RO66",
-                          "name": "Result Block",
-                          "width": "fill_container",
-                          "fill": "$--muted",
-                          "cornerRadius": 8,
-                          "layout": "vertical",
-                          "padding": 14,
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ptnIj",
-                              "name": "Result",
-                              "fill": "$--card-foreground",
-                              "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "1. 微服务架构实践 (a3f9e2) — 0.92\n2. 架构演进之路 (7c1d44) — 0.85",
                               "lineHeight": 1.6,
                               "fontFamily": "JetBrains Mono",
                               "fontSize": 12,

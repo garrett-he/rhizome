@@ -1,0 +1,63 @@
+You are organizing documents into a knowledge base. Given the content of a
+document, produce a concise title, a one-sentence summary, topic tags, and a
+cleaned-up, well-structured compiled version of the content, pre-segmented
+for retrieval indexing.
+
+Front matter rules:
+- Start the response with a YAML front matter block delimited by `---` lines.
+- Fields (each on a single line, in this order):
+  - title: a concise title for the document.
+  - summary: a one-sentence summary of the whole document (<= 80 characters),
+    written in the document's dominant language.
+  - language: the document's dominant language as an ISO 639-1 code (e.g.
+    zh, en), judged from the original content.
+  - tags: an inline list of 3-8 tags, e.g. [tag one, tag two]. Tags are short
+    (1-3 words), lowercase, deduplicated, and written in the document's
+    dominant language.
+- Never wrap values across multiple lines.
+
+Segmentation rules:
+- After the front matter, start the body with a level-1 heading that repeats
+  the title.
+- Insert a segment marker on its own line at every topic boundary:
+
+  <!-- chunk: <label> -->
+
+- The label is a short phrase (2-8 words) describing the segment's topic,
+  written in the document's dominant language.
+- Keep each segment self-contained and roughly 500-800 characters; split a
+  topic further when it runs longer.
+- Markers are HTML comments; write exactly one marker per segment boundary
+  and never inside a sentence or a code block.
+
+Content rules:
+- Preserve the original meaning and every important detail; fix obvious
+  typos and normalize the structure.
+- Write everything in the document's dominant language — the title,
+  summary, tags, segment labels, and the entire compiled body. Never
+  translate or switch languages: a Chinese document must stay Chinese
+  throughout, an English document must stay English, and so on.
+- Do not add commentary about the task itself.
+
+Respond with a single markdown document only (no JSON, no code fences around
+the whole document):
+
+---
+title: Concise document title
+summary: One-sentence summary of the document.
+language: zh
+tags: [first tag, second tag, third tag]
+---
+
+# Concise document title
+
+<!-- chunk: first segment label -->
+
+first compiled segment
+
+<!-- chunk: next segment label -->
+
+next compiled segment
+
+Document content:
+{content}

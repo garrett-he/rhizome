@@ -74,7 +74,16 @@ function VaultMenu({
 
     return (
         <div className="relative">
-            {open && <div aria-hidden className="fixed inset-0 z-40" onClick={close} />}
+            {open && (
+                <button
+                    type="button"
+                    aria-label="关闭菜单"
+                    aria-hidden
+                    tabIndex={-1}
+                    className="fixed inset-0 z-40 cursor-default"
+                    onClick={close}
+                />
+            )}
             <button
                 type="button"
                 aria-haspopup="menu"
@@ -155,7 +164,7 @@ export function AppShell({ vaultPath, vaults = [], onSwitchVault, children }: Ap
                     <SectionTitle label="管理" />
                     <NavItem icon={Tags} label="分类管理" />
                     <NavItem icon={ListChecks} label="任务中心" />
-                    <NavItem icon={Settings} label="设置" />
+                    <NavItem icon={Settings} label="设置" to="/settings" />
                 </nav>
 
                 <VaultMenu vaultPath={vaultPath} vaults={vaults} onSwitchVault={onSwitchVault} />

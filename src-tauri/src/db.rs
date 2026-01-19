@@ -31,13 +31,7 @@ pub fn db_path(vault: &Path) -> PathBuf {
 /// 打开/创建 {vault}/rhizome.db 并确保 settings 与 documents 表存在（幂等）。
 pub fn ensure_db(vault: &Path) -> Result<(), String> {
     let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );",
-    )
-    .map_err(|e| format!("初始化数据库失败: {e}"))?;
+    crate::settings::ensure_table(&conn)?;
     crate::documents::ensure_table(&conn)?;
     Ok(())
 }

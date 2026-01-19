@@ -1,6 +1,7 @@
 mod db;
 mod documents;
 mod profiles;
+mod settings;
 
 use std::path::{Path, PathBuf};
 
@@ -48,6 +49,23 @@ fn list_documents() -> Result<Vec<documents::DocumentSummary>, String> {
     documents::list(Path::new(&current_vault()?))
 }
 
+#[tauri::command]
+fn get_settings() -> Result<Vec<settings::SettingEntry>, String> {
+    settings::get_all(Path::new(&current_vault()?))
+}
+
+#[tauri::command]
+fn set_setting(key: String, value: Option<String>) -> Result<(), String> {
+    settings::set(Path::new(&current_vault()?), &key, value)
+}
+
+#[tauri::command]
+fn get_default_prompt(name: String) -> Result<String, String> {
+    settings::default_prompt(&name)
+        .map(str::to_string)
+        .ok_or_else(|| format!("未知提示词: {name}"))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -58,7 +76,10 @@ pub fn run() {
             open_vault,
             get_overview,
             add_documents,
-            list_documents
+            list_documents,
+            get_settings,
+            set_setting,
+            get_default_prompt
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

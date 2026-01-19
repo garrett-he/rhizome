@@ -3,6 +3,7 @@ import { DocumentLibraryPage } from "./pages/DocumentLibraryPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { RootPage } from "./pages/RootPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 export const routes: RouteObject[] = [
     {
@@ -11,6 +12,7 @@ export const routes: RouteObject[] = [
         children: [
             { index: true, element: <OverviewPage /> },
             { path: "documents", element: <DocumentLibraryPage /> },
+            { path: "settings", element: <SettingsPage /> },
         ],
     },
     {
