@@ -1,0 +1,12 @@
+dist/
+node_modules/
+tsconfig.tsbuildinfo
+coverage/
+
+src-tauri/gen/schemas/
+src-tauri/target/
+src-tauri/build_rs_cov.profraw
+
+# os
+.DS_Store
+Thumbs.db
