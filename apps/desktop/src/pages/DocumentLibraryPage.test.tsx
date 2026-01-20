@@ -103,7 +103,7 @@ describe("DocumentLibraryPage", () => {
         expect(screen.getByText("a.md")).toBeTruthy();
         expect(openMock).toHaveBeenCalledWith({
             multiple: true,
-            filters: [{ name: "纯文本", extensions: ["md", "txt", "srt"] }],
+            filters: expect.arrayContaining([{ name: "纯文本", extensions: ["md", "txt", "srt"] }]),
         });
     });
 

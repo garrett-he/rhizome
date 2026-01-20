@@ -7,6 +7,13 @@ coverage/
 **/src-tauri/target/
 **/src-tauri/build_rs_cov.profraw
 
+# python (extractor)
+.venv/
+__pycache__/
+*.egg-info/
+.ruff_cache/
+.pyrefly/
+
 # os
 .DS_Store
 Thumbs.db

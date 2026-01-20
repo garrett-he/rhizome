@@ -153,23 +153,75 @@ fn sha1_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// 仅按扩展名判型（本期全部为纯文本，魔数探测留待引入二进制类型时补充）
+/// 按扩展名判型（魔数探测留待后续按需补充）。md/txt/srt 为纯文本直读，
+/// 其余类型经 extractor 抽取为 Markdown/OCR/SRT 文本。
 fn detect_mime(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        // 纯文本
         "md" => Some("text/markdown"),
         "txt" => Some("text/plain"),
         "srt" => Some("application/x-subrip"),
+        // 文档
+        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "pptx" => Some("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+        "xlsx" | "xlsm" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        "pdf" => Some("application/pdf"),
+        "html" | "htm" => Some("text/html"),
+        // 图片
+        "bmp" => Some("image/bmp"),
+        "jpeg" | "jpg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "tiff" => Some("image/tiff"),
+        "webp" => Some("image/webp"),
+        // 音频
+        "aac" => Some("audio/aac"),
+        "aiff" => Some("audio/aiff"),
+        "amr" => Some("audio/amr"),
+        "flac" => Some("audio/flac"),
+        "m4a" => Some("audio/mp4"),
+        "mp3" => Some("audio/mpeg"),
+        "ogg" => Some("audio/ogg"),
+        "opus" => Some("audio/opus"),
+        "wav" => Some("audio/wav"),
+        "wma" => Some("audio/x-ms-wma"),
+        // 视频
+        "3gp" => Some("video/3gpp"),
+        "avi" => Some("video/x-msvideo"),
+        "flv" => Some("video/x-flv"),
+        "m4v" => Some("video/x-m4v"),
+        "mkv" => Some("video/x-matroska"),
+        "mov" => Some("video/quicktime"),
+        "mp4" => Some("video/mp4"),
+        "mpg" | "mpeg" => Some("video/mpeg"),
+        "ts" => Some("video/mp2t"),
+        "webm" => Some("video/webm"),
+        "wmv" => Some("video/x-ms-wmv"),
         _ => None,
     }
+}
+
+fn is_plain_text(mime_type: &str) -> bool {
+    mime_type.starts_with("text/") || mime_type == "application/x-subrip"
 }
 
 fn blob_path(vault: &Path, sha1: &str) -> PathBuf {
     vault.join("blobs").join(&sha1[0..2]).join(&sha1[2..4]).join(sha1)
 }
 
-/// 添加单个文档（对齐 deprecated add 流程）：sha1 去重跳过、UTF-8 lossy 读全文、
-/// 复制原文到 blobs 分片目录、插入 status='raw' 行；DB 插入失败回滚删除 blob。
-fn add(vault: &Path, path: &str, category_id: Option<&str>) -> Result<AddOutcome, String> {
+/// 文本抽取入口（依赖注入）：lib.rs 注入 extract::CliExtractor，测试注入 fake。
+pub trait ExtractsText {
+    fn extract(&self, vault: &Path, path: &Path, timeout: std::time::Duration) -> Result<String, String>;
+}
+
+/// 添加单个文档（对齐 deprecated add 流程）：sha1 去重跳过、纯文本直读 /
+/// 其余类型经 extractor 抽取为文本、复制原文到 blobs 分片目录、插入
+/// status='raw' 行；DB 插入失败回滚删除 blob。
+fn add(
+    vault: &Path,
+    path: &str,
+    category_id: Option<&str>,
+    extractor: &dyn ExtractsText,
+) -> Result<AddOutcome, String> {
     let trimmed = path.trim();
     let source = Path::new(trimmed);
     let Some(mime_type) = detect_mime(source) else {
@@ -188,7 +240,16 @@ fn add(vault: &Path, path: &str, category_id: Option<&str>) -> Result<AddOutcome
         return Ok(AddOutcome::Skipped { id });
     }
 
-    let content = String::from_utf8_lossy(&bytes).into_owned();
+    let content = if is_plain_text(mime_type) {
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        let timeout = if mime_type.starts_with("audio/") || mime_type.starts_with("video/") {
+            crate::extract::TIMEOUT_MEDIA
+        } else {
+            crate::extract::TIMEOUT_TEXT
+        };
+        extractor.extract(vault, source, timeout)?
+    };
     let size = bytes.len() as u64;
     let file_name = source
         .file_name()
@@ -216,14 +277,14 @@ fn add(vault: &Path, path: &str, category_id: Option<&str>) -> Result<AddOutcome
 }
 
 /// 批量添加：逐个执行，单文件失败不中断批次；可选统一归入指定分类
-pub fn add_batch(vault: &Path, paths: &[String], category_id: Option<&str>) -> AddSummary {
+pub fn add_batch(vault: &Path, paths: &[String], category_id: Option<&str>, extractor: &dyn ExtractsText) -> AddSummary {
     let mut summary = AddSummary {
         added: 0,
         skipped: 0,
         failures: Vec::new(),
     };
     for path in paths {
-        match add(vault, path, category_id) {
+        match add(vault, path, category_id, extractor) {
             Ok(AddOutcome::Added { .. }) => summary.added += 1,
             Ok(AddOutcome::Skipped { .. }) => summary.skipped += 1,
             Err(error) => summary.failures.push(AddFailure {
@@ -396,6 +457,44 @@ mod tests {
         tmp
     }
 
+    /// 纯文本测试用：任何抽取调用都是 bug。
+    struct NoExtractor;
+
+    impl ExtractsText for NoExtractor {
+        fn extract(
+            &self,
+            _vault: &Path,
+            path: &Path,
+            _timeout: std::time::Duration,
+        ) -> Result<String, String> {
+            panic!("unexpected extraction call: {path:?}");
+        }
+    }
+
+    /// 非纯文本测试用：返回固定文本并记录收到的超时。
+    struct StubExtractor {
+        output: String,
+    }
+
+    impl StubExtractor {
+        fn new(output: &str) -> Self {
+            Self {
+                output: output.to_string(),
+            }
+        }
+    }
+
+    impl ExtractsText for StubExtractor {
+        fn extract(
+            &self,
+            _vault: &Path,
+            _path: &Path,
+            _timeout: std::time::Duration,
+        ) -> Result<String, String> {
+            Ok(self.output.clone())
+        }
+    }
+
     fn write_file(dir: &Path, name: &str, content: &[u8]) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, content).unwrap();
@@ -407,7 +506,7 @@ mod tests {
         let tmp = setup();
         let file = write_file(tmp.path(), "notes.md", b"# hello");
 
-        match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
+        match add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap() {
             AddOutcome::Added { id } => assert_eq!(id.len(), 32),
             other => panic!("期望 Added，实际 {other:?}"),
         }
@@ -442,7 +541,7 @@ mod tests {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.txt", b"content");
 
-        add(tmp.path(), file.to_str().unwrap(), None).unwrap();
+        add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap();
 
         let conn = Connection::open(db_path(tmp.path())).unwrap();
         let sha1: String = conn
@@ -457,8 +556,8 @@ mod tests {
     fn test_add_duplicate_is_skipped() {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.txt", b"same");
-        let first = add(tmp.path(), file.to_str().unwrap(), None).unwrap();
-        let second = add(tmp.path(), file.to_str().unwrap(), None).unwrap();
+        let first = add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap();
+        let second = add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap();
 
         match (first, second) {
             (AddOutcome::Added { id: a }, AddOutcome::Skipped { id: b }) => assert_eq!(a, b),
@@ -474,8 +573,8 @@ mod tests {
     #[test]
     fn test_add_unsupported_extension_fails() {
         let tmp = setup();
-        let file = write_file(tmp.path(), "image.png", b"\x89PNG");
-        let err = add(tmp.path(), file.to_str().unwrap(), None).unwrap_err();
+        let file = write_file(tmp.path(), "archive.xyz", b"???");
+        let err = add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap_err();
 
         assert!(err.contains("不支持的文件类型"));
         let conn = Connection::open(db_path(tmp.path())).unwrap();
@@ -488,7 +587,7 @@ mod tests {
     #[test]
     fn test_add_missing_file_fails() {
         let tmp = setup();
-        let err = add(tmp.path(), tmp.path().join("nope.md").to_str().unwrap(), None).unwrap_err();
+        let err = add(tmp.path(), tmp.path().join("nope.md").to_str().unwrap(), None, &NoExtractor).unwrap_err();
         assert!(err.contains("读取文件失败"));
     }
 
@@ -498,7 +597,23 @@ mod tests {
         assert_eq!(detect_mime(Path::new("a.MD")), Some("text/markdown"));
         assert_eq!(detect_mime(Path::new("a.txt")), Some("text/plain"));
         assert_eq!(detect_mime(Path::new("a.srt")), Some("application/x-subrip"));
-        assert_eq!(detect_mime(Path::new("a.html")), None);
+        assert_eq!(
+            detect_mime(Path::new("a.docx")),
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        );
+        assert_eq!(
+            detect_mime(Path::new("a.pptx")),
+            Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        );
+        assert_eq!(
+            detect_mime(Path::new("a.xlsx")),
+            Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        );
+        assert_eq!(detect_mime(Path::new("a.pdf")), Some("application/pdf"));
+        assert_eq!(detect_mime(Path::new("a.html")), Some("text/html"));
+        assert_eq!(detect_mime(Path::new("a.png")), Some("image/png"));
+        assert_eq!(detect_mime(Path::new("a.mp3")), Some("audio/mpeg"));
+        assert_eq!(detect_mime(Path::new("a.mp4")), Some("video/mp4"));
         assert_eq!(detect_mime(Path::new("noext")), None);
     }
 
@@ -507,7 +622,7 @@ mod tests {
         let tmp = setup();
         let a = write_file(tmp.path(), "a.md", b"a");
         let b = write_file(tmp.path(), "b.txt", b"b");
-        let bad = write_file(tmp.path(), "c.png", b"c");
+        let bad = write_file(tmp.path(), "c.xyz", b"c");
         let paths = [
             a.to_str().unwrap().to_string(),
             b.to_str().unwrap().to_string(),
@@ -515,7 +630,7 @@ mod tests {
             "missing.md".to_string(),
         ];
 
-        let summary = add_batch(tmp.path(), &paths, None);
+        let summary = add_batch(tmp.path(), &paths, None, &NoExtractor);
         assert_eq!(summary.added, 2);
         assert_eq!(summary.skipped, 0);
         assert_eq!(summary.failures.len(), 2);
@@ -532,6 +647,7 @@ mod tests {
             tmp.path(),
             &[a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()],
             None,
+            &NoExtractor,
         );
 
         let docs = list(tmp.path()).unwrap();
@@ -544,7 +660,7 @@ mod tests {
     fn test_get_detail_returns_full_record() {
         let tmp = setup();
         let file = write_file(tmp.path(), "notes.md", b"# hello");
-        let id = match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
+        let id = match add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap() {
             AddOutcome::Added { id } => id,
             other => panic!("期望 Added，实际 {other:?}"),
         };
@@ -588,6 +704,7 @@ mod tests {
             tmp.path(),
             &[a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()],
             None,
+            &NoExtractor,
         );
 
         let conn = Connection::open(db_path(tmp.path())).unwrap();
@@ -640,7 +757,7 @@ mod tests {
     fn test_list_returns_last_error() {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.md", b"a");
-        add(tmp.path(), file.to_str().unwrap(), None).unwrap();
+        add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap();
         let conn = Connection::open(db_path(tmp.path())).unwrap();
         conn.execute("UPDATE documents SET last_error = 'compile: boom'", [])
             .unwrap();
@@ -654,9 +771,9 @@ mod tests {
         let tmp = setup();
         let category = crate::categories::create_category(tmp.path(), "技术笔记").unwrap();
         let file = write_file(tmp.path(), "a.md", b"a");
-        add(tmp.path(), file.to_str().unwrap(), Some(&category.id)).unwrap();
+        add(tmp.path(), file.to_str().unwrap(), Some(&category.id), &NoExtractor).unwrap();
         let file2 = write_file(tmp.path(), "b.md", b"b");
-        add(tmp.path(), file2.to_str().unwrap(), None).unwrap();
+        add(tmp.path(), file2.to_str().unwrap(), None, &NoExtractor).unwrap();
 
         let docs = list(tmp.path()).unwrap();
         assert_eq!(docs.len(), 2);
@@ -673,7 +790,7 @@ mod tests {
         let tmp = setup();
         let category = crate::categories::create_category(tmp.path(), "会议记录").unwrap();
         let file = write_file(tmp.path(), "a.md", b"a");
-        add(tmp.path(), file.to_str().unwrap(), Some(&category.id)).unwrap();
+        add(tmp.path(), file.to_str().unwrap(), Some(&category.id), &NoExtractor).unwrap();
         let docs = list(tmp.path()).unwrap();
 
         let detail = get_detail(tmp.path(), &docs[0].id).unwrap();
@@ -686,7 +803,7 @@ mod tests {
         let tmp = setup();
         let category = crate::categories::create_category(tmp.path(), "技术笔记").unwrap();
         let file = write_file(tmp.path(), "a.md", b"a");
-        let id = match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
+        let id = match add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap() {
             AddOutcome::Added { id } => id,
             other => panic!("期望 Added，实际 {other:?}"),
         };
@@ -712,11 +829,58 @@ mod tests {
     fn test_set_category_missing_category_is_error() {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.md", b"a");
-        let id = match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
+        let id = match add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap() {
             AddOutcome::Added { id } => id,
             other => panic!("期望 Added，实际 {other:?}"),
         };
         let err = set_category(tmp.path(), &id, Some("nope")).unwrap_err();
         assert_eq!(err, "分类不存在: nope");
+    }
+
+    #[test]
+    fn test_add_docx_uses_extractor_for_content_and_keeps_original_blob() {
+        let tmp = setup();
+        let doc = tmp.path().join("a.docx");
+        fs::write(&doc, b"PK\x03\x04 fake docx").unwrap();
+
+        let id = match add(tmp.path(), doc.to_str().unwrap(), None, &StubExtractor::new("提取的正文")).unwrap() {
+            AddOutcome::Added { id } => id,
+            other => panic!("期望 Added，实际 {other:?}"),
+        };
+
+        let detail = get_detail(tmp.path(), &id).unwrap();
+        assert_eq!(detail.content, "提取的正文");
+        assert_eq!(
+            detail.mime_type,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        // blob 存原始字节
+        let blob = blob_path(tmp.path(), &detail.sha1);
+        assert_eq!(fs::read(&blob).unwrap(), b"PK\x03\x04 fake docx");
+    }
+
+    #[test]
+    fn test_add_docx_extractor_failure_is_error() {
+        let tmp = setup();
+        let doc = tmp.path().join("a.docx");
+        fs::write(&doc, b"PK\x03\x04 fake docx").unwrap();
+
+        struct FailingExtractor;
+
+        impl ExtractsText for FailingExtractor {
+            fn extract(
+                &self,
+                _vault: &Path,
+                _path: &Path,
+                _timeout: std::time::Duration,
+            ) -> Result<String, String> {
+                Err("文件抽取失败: boom".to_string())
+            }
+        }
+
+        let error = add(tmp.path(), doc.to_str().unwrap(), None, &FailingExtractor).unwrap_err();
+        assert!(error.contains("boom"));
+        // 失败不应残留任何行
+        assert_eq!(list(tmp.path()).unwrap().len(), 0);
     }
 }

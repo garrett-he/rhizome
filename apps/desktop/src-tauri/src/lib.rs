@@ -2,6 +2,7 @@ mod categories;
 mod compile;
 mod db;
 mod documents;
+mod extract;
 mod embedding;
 mod index_db;
 mod indexer;
@@ -59,7 +60,12 @@ fn add_documents(paths: Vec<String>, category_name: Option<String>) -> Result<do
         Some(name) if !name.trim().is_empty() => Some(categories::ensure_category(Path::new(&vault), name)?),
         _ => None,
     };
-    Ok(documents::add_batch(Path::new(&vault), &paths, category_id.as_deref()))
+    Ok(documents::add_batch(
+        Path::new(&vault),
+        &paths,
+        category_id.as_deref(),
+        &extract::CliExtractor,
+    ))
 }
 
 #[tauri::command]

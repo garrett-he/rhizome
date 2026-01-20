@@ -12,7 +12,16 @@ import type {
     SearchHit,
 } from "@/types/document";
 
-const TEXT_FILTERS = [{ name: "纯文本", extensions: ["md", "txt", "srt"] }];
+const FILE_FILTERS = [
+    { name: "纯文本", extensions: ["md", "txt", "srt"] },
+    { name: "文档", extensions: ["docx", "pdf"] },
+    { name: "演示文稿", extensions: ["pptx"] },
+    { name: "表格", extensions: ["xlsx", "xlsm"] },
+    { name: "网页", extensions: ["html", "htm"] },
+    { name: "图片", extensions: ["png", "jpg", "jpeg", "bmp", "tiff", "webp"] },
+    { name: "音频", extensions: ["mp3", "wav", "m4a", "flac", "ogg", "opus", "aac", "aiff", "amr", "wma"] },
+    { name: "视频", extensions: ["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v", "mpg", "mpeg", "ts", "3gp", "flv"] },
+];
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
     return invoke<DocumentSummary[]>("list_documents");
@@ -51,7 +60,7 @@ export async function searchDocuments(query: string, limit?: number): Promise<Se
 }
 
 export async function pickFiles(): Promise<string[]> {
-    const selected = await open({ multiple: true, filters: TEXT_FILTERS });
+    const selected = await open({ multiple: true, filters: FILE_FILTERS });
     if (typeof selected === "string") {
         return [selected];
     }
