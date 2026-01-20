@@ -7,6 +7,21 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.5.0
+        version: 2.5.15
+      '@changesets/cli':
+        specifier: ^2.31.0
+        version: 2.31.1(@types/node@22.20.5)
+      lint-staged:
+        specifier: ^17.0.7
+        version: 17.6.0
+      simple-git-hooks:
+        specifier: ^2.13.1
+        version: 2.14.0
+
+  apps/desktop:
     dependencies:
       '@radix-ui/react-slot':
         specifier: ^1.2.0
@@ -51,9 +66,6 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.0
         version: 2.5.15
-      '@changesets/cli':
-        specifier: ^2.31.0
-        version: 2.31.1(@types/node@22.20.5)
       '@tauri-apps/cli':
         specifier: ^2
         version: 2.12.3
@@ -87,15 +99,9 @@ importers:
       jsdom:
         specifier: ^29.1.1
         version: 29.1.1
-      lint-staged:
-        specifier: ^17.0.7
-        version: 17.6.0
       postcss:
         specifier: ^8.5.0
         version: 8.5.31
-      simple-git-hooks:
-        specifier: ^2.13.1
-        version: 2.14.0
       tailwindcss:
         specifier: ^3.4.0
         version: 3.4.19(yaml@2.9.1)
