@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AddSummary, CompileOutcome, DocumentSummary, IndexOutcome, ProcessSummary } from "@/types/document";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import type {
+    AddSummary,
+    ChunkInfo,
+    CompileOutcome,
+    DocumentDetail,
+    DocumentSummary,
+    IndexOutcome,
+    ProcessSummary,
+} from "@/types/document";
 
 const TEXT_FILTERS = [{ name: "纯文本", extensions: ["md", "txt", "srt"] }];
 
@@ -12,8 +21,20 @@ export async function addDocuments(paths: string[]): Promise<AddSummary> {
     return invoke<AddSummary>("add_documents", { paths });
 }
 
-export async function compileDocuments(documentIds: string[]): Promise<CompileOutcome[]> {
-    return invoke<CompileOutcome[]>("compile_documents", { documentIds });
+export async function getDocument(id: string): Promise<DocumentDetail> {
+    return invoke<DocumentDetail>("get_document", { id });
+}
+
+export async function listChunks(id: string): Promise<ChunkInfo[]> {
+    return invoke<ChunkInfo[]>("list_chunks", { documentId: id });
+}
+
+export async function revealBlob(path: string): Promise<void> {
+    await revealItemInDir(path);
+}
+
+export async function compileDocuments(documentIds: string[], force = false): Promise<CompileOutcome[]> {
+    return invoke<CompileOutcome[]>("compile_documents", { documentIds, force });
 }
 
 export async function indexDocuments(documentIds: string[]): Promise<IndexOutcome[]> {

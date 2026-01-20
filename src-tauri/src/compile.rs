@@ -50,11 +50,14 @@ pub fn resolve_prompt(vault: &Path) -> Result<String, String> {
 }
 
 /// 编译文档：空 id 列表选择全部 raw；显式 id 不存在则产出错误结果（不中断批次）。
+/// `force` 为 true 时，显式指定的已编译文档先重置为 raw 并清空编译/索引产物与
+/// 旧切片（重新编译语义），随后正常重编译。
 /// 返回前一次性提交所有写库（对齐旧版单 session 末尾 commit）。
 pub fn compile_documents(
     vault: &Path,
     document_ids: &[String],
     client: &dyn LlmClient,
+    force: bool,
 ) -> Result<Vec<CompileOutcome>, String> {
     let mut conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     documents::ensure_table(&conn)?;
@@ -70,16 +73,19 @@ pub fn compile_documents(
         }
     } else {
         for requested in document_ids {
-            let target: Option<(String, String, String)> = tx
+            let target: Option<(String, String, String, String)> = tx
                 .query_row(
-                    "SELECT id, content, file_name FROM documents WHERE id = ?1",
+                    "SELECT id, content, file_name, status FROM documents WHERE id = ?1",
                     [requested],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .optional()
                 .map_err(|e| format!("查询失败: {e}"))?;
             match target {
-                Some((id, content, _file_name)) => {
+                Some((id, content, _file_name, status)) => {
+                    if force && status != "raw" {
+                        reset_for_recompile(&tx, &id)?;
+                    }
                     outcomes.push(compile_one(&tx, client, &prompt_template, &id, &content));
                 }
                 None => outcomes.push(CompileOutcome {
@@ -95,6 +101,22 @@ pub fn compile_documents(
 
     tx.commit().map_err(|e| format!("提交失败: {e}"))?;
     Ok(outcomes)
+}
+
+/// force 重编译前置：重置状态并清空编译/索引产物（同事务，后续 compile_one 重编译）。
+fn reset_for_recompile(tx: &rusqlite::Transaction, id: &str) -> Result<(), String> {
+    crate::index_db::delete_document_chunks(tx, id)?;
+    tx.execute(
+        "UPDATE documents
+         SET status = 'raw', content_compiled = NULL, metadata_compiled = NULL, compiled_at = NULL,
+             llm_model = NULL, indexed_at = NULL, chunk_count = NULL, embedding_model = NULL,
+             last_error = NULL, updated_at = ?2
+         WHERE id = ?1",
+        params![id, now_rfc3339()],
+    )
+    .map_err(|e| format!("重置文档状态失败: {e}"))?;
+    crate::logging::log("INFO", &format!("文档重编译重置 {id}（清空旧切片与编译产物）"));
+    Ok(())
 }
 
 fn select_by_status(tx: &rusqlite::Transaction, status: &str) -> Result<Vec<(String, String)>, String> {
@@ -308,7 +330,7 @@ mod tests {
         let id = add_doc(tmp.path(), "a.md", "原始内容");
         let client = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
 
-        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &client).unwrap();
+        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &client, false).unwrap();
 
         assert!(outcomes[0].ok);
         assert_eq!(outcomes[0].title.as_deref(), Some("笔记标题"));
@@ -331,7 +353,7 @@ mod tests {
         let id = add_doc(tmp.path(), "a.md", "原始内容");
         let client = FakeClient::new(vec![Err("网络错误".to_string())]);
 
-        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &client).unwrap();
+        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &client, false).unwrap();
 
         assert!(!outcomes[0].ok);
         assert_eq!(outcomes[0].error.as_deref(), Some("网络错误"));
@@ -347,11 +369,11 @@ mod tests {
         let second = add_doc(tmp.path(), "b.md", "乙");
         // 先把第一个编译掉
         let client = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
-        compile_documents(tmp.path(), std::slice::from_ref(&first), &client).unwrap();
+        compile_documents(tmp.path(), std::slice::from_ref(&first), &client, false).unwrap();
 
         // 空列表只应处理剩余 raw（乙），fake 只有一个响应
         let client = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
-        let outcomes = compile_documents(tmp.path(), &[], &client).unwrap();
+        let outcomes = compile_documents(tmp.path(), &[], &client, false).unwrap();
 
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].document_id, second);
@@ -363,7 +385,7 @@ mod tests {
         let tmp = setup();
         let client = FakeClient::new(vec![]);
 
-        let outcomes = compile_documents(tmp.path(), &["nope".to_string()], &client).unwrap();
+        let outcomes = compile_documents(tmp.path(), &["nope".to_string()], &client, false).unwrap();
 
         assert!(!outcomes[0].ok);
         assert_eq!(outcomes[0].error.as_deref(), Some("document not found"));
@@ -375,7 +397,7 @@ mod tests {
         let id = add_doc(tmp.path(), "草稿.md", "内容");
         let client = FakeClient::new(vec![Ok("没有 front matter 也没有标题".to_string())]);
 
-        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &client).unwrap();
+        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &client, false).unwrap();
 
         assert!(outcomes[0].ok);
         assert_eq!(outcomes[0].title.as_deref(), Some("草稿.md"));
@@ -424,14 +446,99 @@ mod tests {
         let id = add_doc(tmp.path(), "a.md", "内容");
 
         let failing = FakeClient::new(vec![Err("第一次失败".to_string())]);
-        compile_documents(tmp.path(), std::slice::from_ref(&id), &failing).unwrap();
+        compile_documents(tmp.path(), std::slice::from_ref(&id), &failing, false).unwrap();
 
         let ok = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
-        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &ok).unwrap();
+        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &ok, false).unwrap();
 
         assert!(outcomes[0].ok);
         let (status, _, _, last_error, _) = row(tmp.path(), &id);
         assert_eq!(status, "compiled");
         assert_eq!(last_error, None);
+    }
+
+    #[test]
+    fn test_force_recompiles_compiled_document_and_clears_chunks() {
+        let tmp = setup();
+        let id = add_doc(tmp.path(), "a.md", "原始内容");
+
+        // 先编译成功
+        let client = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
+        compile_documents(tmp.path(), std::slice::from_ref(&id), &client, false).unwrap();
+
+        // 再索引，制造旧切片
+        let model = crate::embedding::tests::FakeEmbedding { dimension: 4 };
+        crate::indexer::index_documents(tmp.path(), std::slice::from_ref(&id), &model, "fake").unwrap();
+
+        // force 重编译：新响应 + 清空旧切片与产物字段
+        let new_client = FakeClient::new(vec![Ok(
+            "---\ntitle: 新标题\n---\n\n# 新标题\n\n<!-- chunk: 新正文 -->\n新内容".to_string(),
+        )]);
+        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &new_client, true).unwrap();
+
+        assert!(outcomes[0].ok);
+        let conn = Connection::open(crate::db::db_path(tmp.path())).unwrap();
+        let (status, compiled, metadata): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT status, content_compiled, metadata_compiled FROM documents WHERE id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        let (chunk_count, embedding_model, indexed_at): (Option<i64>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT chunk_count, embedding_model, indexed_at FROM documents WHERE id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "compiled");
+        assert!(compiled.as_deref().is_some_and(|c| c.contains("新正文")));
+        assert!(metadata.as_deref().is_some_and(|m| m.contains("新标题")));
+        // 索引产物已被清空，等待重新索引
+        assert_eq!(chunk_count, None);
+        assert_eq!(embedding_model, None);
+        assert_eq!(indexed_at, None);
+        let chunks: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks WHERE document_id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(chunks, 0);
+        // 新 prompt 实际发出（含原始内容）
+        assert!(new_client.prompts.lock().unwrap()[0].contains("原始内容"));
+    }
+
+    #[test]
+    fn test_force_without_explicit_ids_ignores_force() {
+        // force 只影响显式指定的文档；空列表按全部 raw 选择，非 raw 不动
+        let tmp = setup();
+        let id = add_doc(tmp.path(), "a.md", "内容");
+        let client = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
+        compile_documents(tmp.path(), std::slice::from_ref(&id), &client, false).unwrap();
+
+        let client2 = FakeClient::new(vec![]);
+        let outcomes = compile_documents(tmp.path(), &[], &client2, true).unwrap();
+        assert!(outcomes.is_empty());
+        let (status, _, _, _, _) = row(tmp.path(), &id);
+        assert_eq!(status, "compiled");
+    }
+
+    #[test]
+    fn test_force_failure_keeps_raw_and_last_error() {
+        let tmp = setup();
+        let id = add_doc(tmp.path(), "a.md", "原始内容");
+        let client = FakeClient::new(vec![Ok(GOOD_RESPONSE.to_string())]);
+        compile_documents(tmp.path(), std::slice::from_ref(&id), &client, false).unwrap();
+
+        let failing = FakeClient::new(vec![Err("重编译失败".to_string())]);
+        let outcomes = compile_documents(tmp.path(), std::slice::from_ref(&id), &failing, true).unwrap();
+
+        assert!(!outcomes[0].ok);
+        let (status, compiled, _, last_error, _) = row(tmp.path(), &id);
+        assert_eq!(status, "raw");
+        // 旧编译稿已被清空，不会出现状态与产物不一致
+        assert_eq!(compiled, "");
+        assert_eq!(last_error.as_deref(), Some("compile: 重编译失败"));
     }
 }

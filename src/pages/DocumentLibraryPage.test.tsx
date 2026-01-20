@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DocumentSummary } from "@/types/document";
@@ -37,7 +38,11 @@ beforeEach(() => {
 
 describe("DocumentLibraryPage", () => {
     it("renders empty state when no documents", async () => {
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
 
         expect(await screen.findByText("暂无文档，点击右上角导入文档添加")).toBeTruthy();
     });
@@ -47,7 +52,11 @@ describe("DocumentLibraryPage", () => {
             doc({ file_name: "notes.md" }),
             doc({ id: "doc2", file_name: "sub.srt", mime_type: "application/x-subrip" }),
         ]);
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
 
         expect(await screen.findByText("notes.md")).toBeTruthy();
         expect(screen.getByText("sub.srt")).toBeTruthy();
@@ -59,7 +68,11 @@ describe("DocumentLibraryPage", () => {
 
     it("shows summary after importing files", async () => {
         const user = userEvent.setup();
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
         await screen.findByText("暂无文档，点击右上角导入文档添加");
 
         openMock.mockResolvedValue(["C:\\docs\\a.md", "C:\\docs\\b.png"]);
@@ -89,7 +102,11 @@ describe("DocumentLibraryPage", () => {
 
     it("silently skips auto processing when LLM is not configured", async () => {
         const user = userEvent.setup();
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
         await screen.findByText("暂无文档，点击右上角导入文档添加");
 
         openMock.mockResolvedValue(["C:\\docs\\a.md"]);
@@ -111,7 +128,11 @@ describe("DocumentLibraryPage", () => {
 
     it("cancelling the dialog imports nothing", async () => {
         const user = userEvent.setup();
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
         await screen.findByText("暂无文档，点击右上角导入文档添加");
 
         openMock.mockResolvedValue(null);
@@ -126,14 +147,22 @@ describe("DocumentLibraryPage", () => {
 
     it("shows inline error when listing fails", async () => {
         invokeMock.mockRejectedValue("未选择知识库");
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
 
         expect(await screen.findByRole("alert")).toHaveTextContent("未选择知识库");
     });
 
     it("marks failed documents and shows last_error", async () => {
         invokeMock.mockResolvedValue([doc({ status: "raw", last_error: "compile: 网络错误" })]);
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
 
         expect(await screen.findByText(/compile: 网络错误/)).toBeTruthy();
         // 失败行提供重试按钮
@@ -143,7 +172,11 @@ describe("DocumentLibraryPage", () => {
     it("retries a single document via compile + index", async () => {
         const user = userEvent.setup();
         invokeMock.mockResolvedValue([doc({ status: "raw" })]);
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
         await screen.findByText("notes.md");
 
         invokeMock.mockImplementation(async (cmd: string) => {
@@ -158,7 +191,7 @@ describe("DocumentLibraryPage", () => {
         await user.click(screen.getByRole("button", { name: /重试/ }));
 
         await waitFor(() => {
-            expect(invokeMock).toHaveBeenCalledWith("compile_documents", { documentIds: ["doc1"] });
+            expect(invokeMock).toHaveBeenCalledWith("compile_documents", { documentIds: ["doc1"], force: false });
         });
         expect(invokeMock).toHaveBeenCalledWith("index_documents", { documentIds: ["doc1"] });
         expect(await screen.findByText("已索引")).toBeTruthy();
@@ -167,7 +200,11 @@ describe("DocumentLibraryPage", () => {
     it("runs batch compile+index from header button", async () => {
         const user = userEvent.setup();
         invokeMock.mockResolvedValue([doc({ status: "raw" })]);
-        render(<DocumentLibraryPage />);
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
         await screen.findByText("notes.md");
 
         invokeMock.mockImplementation(async (cmd: string) => {

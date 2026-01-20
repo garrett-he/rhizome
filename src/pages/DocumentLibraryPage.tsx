@@ -1,4 +1,5 @@
 import { Loader2, RefreshCw, RotateCcw, Upload } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useDocuments } from "@/hooks/useDocuments";
 import { formatBytes, formatShortDate } from "@/lib/format";
@@ -116,7 +117,12 @@ export function DocumentLibraryPage() {
                                     className="border-t border-neutral-200 transition-colors hover:bg-neutral-100/60"
                                 >
                                     <td className="px-4 py-2.5">
-                                        <span className="text-sm font-medium text-neutral-950">{doc.file_name}</span>
+                                        <Link
+                                            to={`/documents/${doc.id}`}
+                                            className="text-sm font-medium text-neutral-950 hover:underline"
+                                        >
+                                            {doc.file_name}
+                                        </Link>
                                         {hasError && (
                                             <span title={doc.last_error ?? ""} className="ml-2 text-xs text-red-600">
                                                 {doc.last_error}

@@ -56,6 +56,32 @@ pub struct DocumentSummary {
     pub last_error: Option<String>,
 }
 
+/// 文档详情（详情页全量数据）。
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct DocumentDetail {
+    pub id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    #[serde(rename = "type")]
+    pub doc_type: String,
+    pub sha1: String,
+    pub size: u64,
+    pub status: String,
+    pub content: String,
+    pub content_compiled: Option<String>,
+    pub metadata_compiled: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub compiled_at: Option<String>,
+    pub llm_model: Option<String>,
+    pub indexed_at: Option<String>,
+    pub chunk_count: Option<i64>,
+    pub embedding_model: Option<String>,
+    pub last_error: Option<String>,
+    /// blob 原始文件绝对路径（打开原始文件用）
+    pub blob_path: String,
+}
+
 #[derive(Serialize, Debug, PartialEq)]
 pub struct AddFailure {
     pub path: String,
@@ -222,6 +248,50 @@ pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
         .map_err(|e| format!("查询失败: {e}"))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("读取结果失败: {e}"))
+}
+
+/// 读取单个文档详情；不存在返回 Err。
+pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
+    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    ensure_table(&conn)?;
+    let detail = conn
+        .query_row(
+            "SELECT id, file_name, mime_type, type, sha1, size, status, content, content_compiled,
+                    metadata_compiled, created_at, updated_at, compiled_at, llm_model, indexed_at,
+                    chunk_count, embedding_model, last_error
+             FROM documents WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(DocumentDetail {
+                    id: row.get(0)?,
+                    file_name: row.get(1)?,
+                    mime_type: row.get(2)?,
+                    doc_type: row.get(3)?,
+                    sha1: row.get(4)?,
+                    size: row.get::<_, i64>(5)?.max(0) as u64,
+                    status: row.get(6)?,
+                    content: row.get(7)?,
+                    content_compiled: row.get(8)?,
+                    metadata_compiled: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                    compiled_at: row.get(12)?,
+                    llm_model: row.get(13)?,
+                    indexed_at: row.get(14)?,
+                    chunk_count: row.get(15)?,
+                    embedding_model: row.get(16)?,
+                    last_error: row.get(17)?,
+                    blob_path: String::new(),
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("查询失败: {e}"))?
+        .ok_or_else(|| format!("文档不存在: {id}"))?;
+    Ok(DocumentDetail {
+        blob_path: blob_path(vault, &detail.sha1).to_string_lossy().into_owned(),
+        ..detail
+    })
 }
 
 /// (total, indexed, pending)；documents 表缺失时全部为 0（防御旧库未迁移）
@@ -420,6 +490,45 @@ mod tests {
         assert_eq!(docs.len(), 2);
         assert_eq!(docs[0].file_name, "b.txt");
         assert_eq!(docs[1].file_name, "a.md");
+    }
+
+    #[test]
+    fn test_get_detail_returns_full_record() {
+        let tmp = setup();
+        let file = write_file(tmp.path(), "notes.md", b"# hello");
+        let id = match add(tmp.path(), file.to_str().unwrap()).unwrap() {
+            AddOutcome::Added { id } => id,
+            other => panic!("期望 Added，实际 {other:?}"),
+        };
+        let conn = Connection::open(db_path(tmp.path())).unwrap();
+        conn.execute(
+            "UPDATE documents SET status = 'compiled', content_compiled = '# 编译稿', metadata_compiled = '{\"title\":\"编译标题\"}' WHERE id = ?1",
+            [&id],
+        )
+        .unwrap();
+
+        let detail = get_detail(tmp.path(), &id).unwrap();
+        assert_eq!(detail.id, id);
+        assert_eq!(detail.file_name, "notes.md");
+        assert_eq!(detail.doc_type, "plaintext");
+        assert_eq!(detail.status, "compiled");
+        assert_eq!(detail.content, "# hello");
+        assert_eq!(detail.content_compiled.as_deref(), Some("# 编译稿"));
+        assert_eq!(detail.metadata_compiled.as_deref(), Some("{\"title\":\"编译标题\"}"));
+        assert_eq!(detail.sha1.len(), 40);
+        // Windows 路径分隔符归一后校验分片目录结构
+        let normalized = detail.blob_path.replace('\\', "/");
+        assert!(normalized.contains(&format!("blobs/{}/{}", &detail.sha1[0..2], &detail.sha1[2..4])));
+        assert!(detail.blob_path.ends_with(&detail.sha1));
+        assert_eq!(detail.chunk_count, None);
+        assert_eq!(detail.last_error, None);
+    }
+
+    #[test]
+    fn test_get_detail_missing_is_error() {
+        let tmp = setup();
+        let error = get_detail(tmp.path(), "nope").unwrap_err();
+        assert!(error.contains("文档不存在"));
     }
 
     #[test]

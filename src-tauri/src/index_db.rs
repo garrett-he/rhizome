@@ -175,6 +175,40 @@ pub fn replace_chunks(
     Ok(())
 }
 
+/// 删除一个文档的全部切片（fts → vec → chunks，与 replace_chunks 顺序一致）。
+/// 供 force 重编译在写入新编译稿前清理旧产物；索引 schema 未建或无切片时为幂等空操作。
+pub fn delete_document_chunks(tx: &rusqlite::Transaction, document_id: &str) -> Result<(), String> {
+    let table_exists = |name: &str| -> Result<bool, String> {
+        tx.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|o| o.is_some())
+        .map_err(|e| format!("检查表失败: {e}"))
+    };
+    if table_exists("chunks_fts")? {
+        tx.execute(
+            "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE document_id = ?1)",
+            [document_id],
+        )
+        .map_err(|e| format!("清理全文索引失败: {e}"))?;
+    }
+    if table_exists("chunks_vec")? {
+        tx.execute(
+            "DELETE FROM chunks_vec WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?1)",
+            [document_id],
+        )
+        .map_err(|e| format!("清理旧向量失败: {e}"))?;
+    }
+    if table_exists("chunks")? {
+        tx.execute("DELETE FROM chunks WHERE document_id = ?1", [document_id])
+            .map_err(|e| format!("清理旧 chunks 失败: {e}"))?;
+    }
+    Ok(())
+}
+
 fn now_rfc3339() -> String {
     use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;

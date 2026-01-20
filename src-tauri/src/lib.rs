@@ -57,6 +57,16 @@ fn list_documents() -> Result<Vec<documents::DocumentSummary>, String> {
 }
 
 #[tauri::command]
+fn get_document(id: String) -> Result<documents::DocumentDetail, String> {
+    documents::get_detail(Path::new(&current_vault()?), &id)
+}
+
+#[tauri::command]
+fn list_chunks(document_id: String) -> Result<Vec<indexer::ChunkInfo>, String> {
+    indexer::list_chunks(Path::new(&current_vault()?), &document_id)
+}
+
+#[tauri::command]
 fn get_settings() -> Result<Vec<settings::SettingEntry>, String> {
     settings::get_all(Path::new(&current_vault()?))
 }
@@ -82,13 +92,14 @@ pub struct ProcessSummary {
     pub index_failures: u64,
 }
 
-/// 编译指定文档（空列表 = 全部 raw）。LLM 调用与写库在阻塞线程执行。
+/// 编译指定文档（空列表 = 全部 raw）。force 时重置已编译文档并清空旧切片再重编译。
 #[tauri::command]
-async fn compile_documents(document_ids: Vec<String>) -> Result<Vec<llm::CompileOutcome>, String> {
+async fn compile_documents(document_ids: Vec<String>, force: Option<bool>) -> Result<Vec<llm::CompileOutcome>, String> {
+    let force = force.unwrap_or(false);
     let vault = current_vault()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let client = compile::client_from_settings(&vault)?;
-        compile::compile_documents(&vault, &document_ids, &client)
+        compile::compile_documents(&vault, &document_ids, &client, force)
     })
     .await
     .map_err(|e| format!("任务执行失败: {e}"))?;
@@ -120,7 +131,7 @@ async fn process_documents() -> Result<ProcessSummary, String> {
     let vault = current_vault()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let client = compile::client_from_settings(&vault)?;
-        let compile_outcomes = compile::compile_documents(&vault, &[], &client)?;
+        let compile_outcomes = compile::compile_documents(&vault, &[], &client, false)?;
         let compiled = compile_outcomes.iter().filter(|o| o.ok).count() as u64;
         let compile_failures = compile_outcomes.iter().filter(|o| !o.ok).count() as u64;
 
@@ -164,6 +175,8 @@ pub fn run() {
             get_overview,
             add_documents,
             list_documents,
+            get_document,
+            list_chunks,
             get_settings,
             set_setting,
             get_default_prompt,

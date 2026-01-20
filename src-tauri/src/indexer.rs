@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::documents;
@@ -23,6 +23,14 @@ pub struct IndexOutcome {
     pub chunks: u32,
     pub ok: bool,
     pub error: Option<String>,
+}
+
+/// 索引切片摘要（详情页切片列表）。
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct ChunkInfo {
+    pub id: i64,
+    pub label: String,
+    pub text: String,
 }
 
 /// 索引文档：空 id 列表选择全部 compiled；显式 id 不存在则产出错误结果。
@@ -210,6 +218,47 @@ fn metadata_title(tx: &rusqlite::Transaction, id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 读取文档切片（详情页切片列表）；文档不存在返回 Err，无切片返回空列表。
+pub fn list_chunks(vault: &Path, document_id: &str) -> Result<Vec<ChunkInfo>, String> {
+    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    documents::ensure_table(&conn)?;
+    let exists: Option<String> = conn
+        .query_row("SELECT id FROM documents WHERE id = ?1", [document_id], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(|e| format!("查询失败: {e}"))?;
+    if exists.is_none() {
+        return Err(format!("文档不存在: {document_id}"));
+    }
+    let chunks_table_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|e| format!("检查 chunks 表失败: {e}"))?
+        .is_some();
+    if !chunks_table_exists {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, label, text FROM chunks WHERE document_id = ?1 ORDER BY id")
+        .map_err(|e| format!("查询失败: {e}"))?;
+    let rows = stmt
+        .query_map([document_id], |row| {
+            Ok(ChunkInfo {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                text: row.get(2)?,
+            })
+        })
+        .map_err(|e| format!("查询失败: {e}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("读取结果失败: {e}"))
+}
+
 fn now_rfc3339() -> String {
     use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
@@ -220,7 +269,6 @@ fn now_rfc3339() -> String {
 mod tests {
     use super::*;
     use crate::db::ensure_db;
-    use rusqlite::Connection;
     use tempfile::TempDir;
 
     use crate::embedding::tests::FakeEmbedding;
@@ -383,5 +431,25 @@ mod tests {
         fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
             Err("模型炸了".to_string())
         }
+    }
+
+    #[test]
+    fn test_list_chunks_ordered_and_empty_cases() {
+        let tmp = setup();
+        insert_doc(&tmp, "a", "compiled", Some(COMPILED_BODY));
+        insert_doc(&tmp, "raw1", "raw", None);
+        let model = FakeEmbedding { dimension: 4 };
+        index_documents(tmp.path(), &["a".to_string()], &model, "fake").unwrap();
+
+        let chunks = list_chunks(tmp.path(), "a").unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].label, "正文");
+        assert!(chunks[0].id < chunks[1].id);
+        assert!(chunks[1].text.contains("最后一段"));
+
+        // raw 文档无切片 → 空列表
+        assert!(list_chunks(tmp.path(), "raw1").unwrap().is_empty());
+        // 文档不存在 → Err
+        assert!(list_chunks(tmp.path(), "nope").unwrap_err().contains("文档不存在"));
     }
 }

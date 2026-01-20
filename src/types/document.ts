@@ -42,3 +42,31 @@ export interface ProcessSummary {
     indexed: number;
     index_failures: number;
 }
+
+export interface DocumentDetail {
+    id: string;
+    file_name: string;
+    mime_type: string;
+    type: string;
+    sha1: string;
+    size: number;
+    status: string;
+    content: string;
+    content_compiled: string | null;
+    metadata_compiled: string | null;
+    created_at: string;
+    updated_at: string;
+    compiled_at: string | null;
+    llm_model: string | null;
+    indexed_at: string | null;
+    chunk_count: number | null;
+    embedding_model: string | null;
+    last_error: string | null;
+    blob_path: string;
+}
+
+export interface ChunkInfo {
+    id: number;
+    label: string;
+    text: string;
+}
