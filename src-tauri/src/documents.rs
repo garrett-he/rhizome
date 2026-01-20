@@ -20,8 +20,28 @@ pub const TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS documents (
     content TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'raw',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    content_compiled TEXT,
+    metadata_compiled TEXT,
+    compiled_at TEXT,
+    llm_model TEXT,
+    indexed_at TEXT,
+    chunk_count INTEGER,
+    embedding_model TEXT,
+    last_error TEXT
 );";
+
+/// 旧库（最小列集）幂等补列：(列名, 列声明)
+const MIGRATION_COLUMNS: &[(&str, &str)] = &[
+    ("content_compiled", "TEXT"),
+    ("metadata_compiled", "TEXT"),
+    ("compiled_at", "TEXT"),
+    ("llm_model", "TEXT"),
+    ("indexed_at", "TEXT"),
+    ("chunk_count", "INTEGER"),
+    ("embedding_model", "TEXT"),
+    ("last_error", "TEXT"),
+];
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct DocumentSummary {
@@ -33,6 +53,7 @@ pub struct DocumentSummary {
     pub status: String,
     pub size: u64,
     pub created_at: String,
+    pub last_error: Option<String>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -56,7 +77,32 @@ enum AddOutcome {
 
 pub fn ensure_table(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(TABLE_SQL)
-        .map_err(|e| format!("初始化 documents 表失败: {e}"))
+        .map_err(|e| format!("初始化 documents 表失败: {e}"))?;
+    migrate_columns(conn)
+}
+
+/// 对旧库幂等补列：按 PRAGMA table_info 检查缺失列再 ALTER TABLE ADD COLUMN
+fn migrate_columns(conn: &Connection) -> Result<(), String> {
+    let existing = column_names(conn)?;
+    for (name, decl) in MIGRATION_COLUMNS {
+        if existing.iter().any(|c| c == name) {
+            continue;
+        }
+        conn.execute(&format!("ALTER TABLE documents ADD COLUMN {name} {decl}"), [])
+            .map_err(|e| format!("迁移 documents 表失败: {e}"))?;
+    }
+    Ok(())
+}
+
+fn column_names(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(documents)")
+        .map_err(|e| format!("检查 documents 表结构失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("检查 documents 表结构失败: {e}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("检查 documents 表结构失败: {e}"))
 }
 
 fn now_rfc3339() -> String {
@@ -156,7 +202,7 @@ pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
     ensure_table(&conn)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, file_name, mime_type, type, status, size, created_at
+            "SELECT id, file_name, mime_type, type, status, size, created_at, last_error
              FROM documents ORDER BY created_at DESC",
         )
         .map_err(|e| format!("查询失败: {e}"))?;
@@ -170,6 +216,7 @@ pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
                 status: row.get(4)?,
                 size: row.get::<_, i64>(5)?.max(0) as u64,
                 created_at: row.get(6)?,
+                last_error: row.get(7)?,
             })
         })
         .map_err(|e| format!("查询失败: {e}"))?;
@@ -196,6 +243,28 @@ pub fn counts(conn: &Connection) -> (u64, u64, u64) {
         one("SELECT COUNT(*) FROM documents WHERE status = 'indexed'"),
         one("SELECT COUNT(*) FROM documents WHERE status = 'raw'"),
     )
+}
+
+/// last_error 非空的文档数（处理失败）；表缺失时为 0
+pub fn failed_count(conn: &Connection) -> u64 {
+    let table_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    if !table_exists {
+        return 0;
+    }
+    conn.query_row(
+        "SELECT COUNT(*) FROM documents WHERE last_error IS NOT NULL",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+    .max(0) as u64
 }
 
 #[cfg(test)]
@@ -376,5 +445,49 @@ mod tests {
         conn.execute("DROP TABLE documents", []).unwrap();
 
         assert_eq!(counts(&conn), (0, 0, 0));
+    }
+
+    #[test]
+    fn test_ensure_table_migrates_minimal_schema() {
+        let tmp = TempDir::new().unwrap();
+        let conn = Connection::open(db_path(tmp.path())).unwrap();
+        conn.execute(
+            "CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                file_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                type TEXT NOT NULL,
+                sha1 TEXT NOT NULL UNIQUE,
+                size INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'raw',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+
+        ensure_table(&conn).unwrap();
+
+        let names = column_names(&conn).unwrap();
+        for (name, _) in MIGRATION_COLUMNS {
+            assert!(names.iter().any(|c| c == name), "缺少列 {name}");
+        }
+        // 再跑一遍仍是幂等的
+        ensure_table(&conn).unwrap();
+    }
+
+    #[test]
+    fn test_list_returns_last_error() {
+        let tmp = setup();
+        let file = write_file(tmp.path(), "a.md", b"a");
+        add(tmp.path(), file.to_str().unwrap()).unwrap();
+        let conn = Connection::open(db_path(tmp.path())).unwrap();
+        conn.execute("UPDATE documents SET last_error = 'compile: boom'", [])
+            .unwrap();
+
+        let docs = list(tmp.path()).unwrap();
+        assert_eq!(docs[0].last_error.as_deref(), Some("compile: boom"));
     }
 }

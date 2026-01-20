@@ -36,16 +36,17 @@ pub fn ensure_db(vault: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 总览统计。文档计数来自 documents 表真实查询（failed 恒 0，最小表无 last_error 列）；
+/// 总览统计。文档计数来自 documents 表真实查询（failed = last_error 非空）；
 /// 存储占用为 vault 目录的实时大小（含 rhizome.db 与 blobs）。
 pub fn get_overview(vault: &Path) -> Result<Overview, String> {
     let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     let (total_documents, indexed_documents, pending_documents) = crate::documents::counts(&conn);
+    let failed_documents = crate::documents::failed_count(&conn);
     Ok(Overview {
         total_documents,
         indexed_documents,
         pending_documents,
-        failed_documents: 0,
+        failed_documents,
         storage_bytes: dir_size(vault),
         categories: Vec::new(),
     })
@@ -147,5 +148,25 @@ mod tests {
         assert_eq!(overview.failed_documents, 0);
         assert_eq!(overview.categories, Vec::new());
         assert_eq!(overview.storage_bytes, 256);
+    }
+
+    #[test]
+    fn test_get_overview_counts_failed_documents() {
+        let tmp = TempDir::new().unwrap();
+        crate::settings::ensure_table(&Connection::open(db_path(tmp.path())).unwrap()).unwrap();
+        crate::documents::ensure_table(&Connection::open(db_path(tmp.path())).unwrap()).unwrap();
+        let conn = Connection::open(db_path(tmp.path())).unwrap();
+        conn.execute(
+            "INSERT INTO documents (id, file_name, mime_type, type, sha1, size, content, status, created_at, updated_at, last_error)
+             VALUES ('a', 'a.md', 'text/markdown', 'plaintext', 's1', 1, 'c', 'raw', 't', 't', 'compile: boom'),
+                   ('b', 'b.md', 'text/markdown', 'plaintext', 's2', 1, 'c', 'raw', 't', 't', NULL)",
+            [],
+        )
+        .unwrap();
+
+        let overview = get_overview(tmp.path()).unwrap();
+        assert_eq!(overview.total_documents, 2);
+        assert_eq!(overview.failed_documents, 1);
+        assert_eq!(overview.pending_documents, 2);
     }
 }

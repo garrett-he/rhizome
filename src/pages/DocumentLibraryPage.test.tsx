@@ -22,9 +22,12 @@ function doc(overrides: Partial<DocumentSummary>): DocumentSummary {
         status: "raw",
         size: 2202009,
         created_at: "2026-10-22T01:00:00Z",
+        last_error: null,
         ...overrides,
     };
 }
+
+const PROCESS_SUMMARY = { compiled: 1, compile_failures: 0, indexed: 1, index_failures: 0 };
 
 beforeEach(() => {
     invokeMock.mockReset();
@@ -68,17 +71,42 @@ describe("DocumentLibraryPage", () => {
                     failures: [{ path: args?.paths?.[1] ?? "", error: "不支持的文件类型" }],
                 };
             }
+            if (cmd === "process_documents") {
+                return PROCESS_SUMMARY;
+            }
             return [doc({ file_name: "a.md" })];
         });
         await user.click(screen.getByRole("button", { name: "导入文档" }));
 
         expect(await screen.findByText(/新增 1 · 跳过 0 · 失败 1/)).toBeTruthy();
-        expect(screen.getByText(/不支持的文件类型/)).toBeTruthy();
+        expect(screen.getByText(/自动处理完成：编译 1 · 索引 1/)).toBeTruthy();
         expect(screen.getByText("a.md")).toBeTruthy();
         expect(openMock).toHaveBeenCalledWith({
             multiple: true,
             filters: [{ name: "纯文本", extensions: ["md", "txt", "srt"] }],
         });
+    });
+
+    it("silently skips auto processing when LLM is not configured", async () => {
+        const user = userEvent.setup();
+        render(<DocumentLibraryPage />);
+        await screen.findByText("暂无文档，点击右上角导入文档添加");
+
+        openMock.mockResolvedValue(["C:\\docs\\a.md"]);
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "add_documents") {
+                return { added: 1, skipped: 0, failures: [] };
+            }
+            if (cmd === "process_documents") {
+                throw new Error("LLM 未配置");
+            }
+            return [doc({ file_name: "a.md" })];
+        });
+        await user.click(screen.getByRole("button", { name: "导入文档" }));
+
+        expect(await screen.findByText(/新增 1 · 跳过 0 · 失败 0/)).toBeTruthy();
+        expect(screen.queryByText(/自动处理完成/)).toBeNull();
+        expect(screen.queryByRole("alert")).toBeNull();
     });
 
     it("cancelling the dialog imports nothing", async () => {
@@ -101,5 +129,56 @@ describe("DocumentLibraryPage", () => {
         render(<DocumentLibraryPage />);
 
         expect(await screen.findByRole("alert")).toHaveTextContent("未选择知识库");
+    });
+
+    it("marks failed documents and shows last_error", async () => {
+        invokeMock.mockResolvedValue([doc({ status: "raw", last_error: "compile: 网络错误" })]);
+        render(<DocumentLibraryPage />);
+
+        expect(await screen.findByText(/compile: 网络错误/)).toBeTruthy();
+        // 失败行提供重试按钮
+        expect(screen.getByRole("button", { name: /重试/ })).toBeTruthy();
+    });
+
+    it("retries a single document via compile + index", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockResolvedValue([doc({ status: "raw" })]);
+        render(<DocumentLibraryPage />);
+        await screen.findByText("notes.md");
+
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "compile_documents") {
+                return [{ document_id: "doc1", title: "t", tags: null, ok: true, error: null }];
+            }
+            if (cmd === "index_documents") {
+                return [{ document_id: "doc1", title: "t", chunks: 3, ok: true, error: null }];
+            }
+            return [doc({ status: "indexed" })];
+        });
+        await user.click(screen.getByRole("button", { name: /重试/ }));
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("compile_documents", { documentIds: ["doc1"] });
+        });
+        expect(invokeMock).toHaveBeenCalledWith("index_documents", { documentIds: ["doc1"] });
+        expect(await screen.findByText("已索引")).toBeTruthy();
+    });
+
+    it("runs batch compile+index from header button", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockResolvedValue([doc({ status: "raw" })]);
+        render(<DocumentLibraryPage />);
+        await screen.findByText("notes.md");
+
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "process_documents") {
+                return PROCESS_SUMMARY;
+            }
+            return [doc({ status: "indexed" })];
+        });
+        await user.click(screen.getByRole("button", { name: "编译并索引" }));
+
+        expect(await screen.findByText(/处理完成：编译 1 · 索引 1/)).toBeTruthy();
+        expect(invokeMock).toHaveBeenCalledWith("process_documents");
     });
 });

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 pub const TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS settings (
@@ -46,6 +46,15 @@ pub fn get_all(vault: &Path) -> Result<Vec<SettingEntry>, String> {
         .map_err(|e| format!("查询失败: {e}"))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("读取结果失败: {e}"))
+}
+
+/// 读取单个设置键（不存在为 None）
+pub fn get(vault: &Path, key: &str) -> Result<Option<String>, String> {
+    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    ensure_table(&conn)?;
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| row.get(0))
+        .optional()
+        .map_err(|e| format!("查询失败: {e}"))
 }
 
 /// 写入或删除（value 为 None 时删键）
