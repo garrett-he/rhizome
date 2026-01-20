@@ -1,4 +1,5 @@
 import type { RouteObject } from "react-router-dom";
+import { CategoriesPage } from "./pages/CategoriesPage";
 import { DocumentDetailPage } from "./pages/DocumentDetailPage";
 import { DocumentLibraryPage } from "./pages/DocumentLibraryPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
@@ -18,6 +19,7 @@ export const routes: RouteObject[] = [
             { path: "documents/:id", element: <DocumentDetailPage /> },
             { path: "search", element: <SearchPage /> },
             { path: "qa", element: <QaPage /> },
+            { path: "categories", element: <CategoriesPage /> },
             { path: "settings", element: <SettingsPage /> },
         ],
     },

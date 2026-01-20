@@ -48,7 +48,7 @@ export function useDocuments() {
         void refresh();
     }, [refresh]);
 
-    const importFiles = useCallback(async (): Promise<AddSummary | null> => {
+    const importFiles = useCallback(async (categoryName?: string): Promise<AddSummary | null> => {
         setError(null);
         setProcessNote(null);
         try {
@@ -56,7 +56,7 @@ export function useDocuments() {
             if (paths.length === 0) {
                 return null;
             }
-            const result = await addDocumentsCmd(paths);
+            const result = await addDocumentsCmd(paths, categoryName);
             setSummary(result);
             if (result.added > 0) {
                 // 自动 compile→index；LLM/embedding 未配置或失败时静默保持 raw，

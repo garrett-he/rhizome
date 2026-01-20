@@ -44,6 +44,8 @@ function detail(overrides: Partial<DocumentDetail> = {}): DocumentDetail {
         chunk_count: 2,
         embedding_model: "BAAI/bge-small-zh-v1.5",
         last_error: null,
+        category_id: null,
+        category_name: null,
         blob_path: "C:\\vault\\blobs\\a3\\f9\\a3f9e2",
         ...overrides,
     };
@@ -73,6 +75,12 @@ function mockHappyPath(
         }
         if (cmd === "list_chunks") {
             return chunks;
+        }
+        if (cmd === "list_categories") {
+            return [
+                { id: "cat-a", name: "技术笔记", document_count: 1 },
+                { id: "cat-b", name: "会议记录", document_count: 0 },
+            ];
         }
         if (cmd === "compile_documents") {
             return [{ document_id: "doc1", title: "t", tags: null, ok: true, error: null }];
@@ -250,5 +258,77 @@ describe("DocumentDetailPage", () => {
         await screen.findByText("01 · 服务拆分");
         const target = screen.getByText("第一段内容。").closest("section");
         expect(target?.className).not.toContain("bg-accent");
+    });
+
+    it("changes document category via the select", async () => {
+        mockHappyPath({ category_id: null, category_name: null });
+        const user = userEvent.setup();
+        renderPage();
+        await screen.findByText("01 · 服务拆分");
+
+        const select = screen.getByLabelText("所属分类") as HTMLSelectElement;
+        expect(select.value).toBe("");
+
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "set_document_category") {
+                return null;
+            }
+            if (cmd === "get_document") {
+                return detail({ category_id: "cat-a", category_name: "技术笔记" });
+            }
+            if (cmd === "list_chunks") {
+                return [chunk(), chunk({ id: 2, label: "数据一致性", text: "第二段内容。" })];
+            }
+            if (cmd === "list_categories") {
+                return [
+                    { id: "cat-a", name: "技术笔记", document_count: 1 },
+                    { id: "cat-b", name: "会议记录", document_count: 0 },
+                ];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        await user.selectOptions(select, "cat-a");
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("set_document_category", {
+                documentId: "doc1",
+                categoryId: "cat-a",
+            });
+        });
+        // 刷新后选中值同步为新分类
+        await waitFor(() => {
+            expect((screen.getByLabelText("所属分类") as HTMLSelectElement).value).toBe("cat-a");
+        });
+    });
+
+    it("clears document category by selecting the placeholder option", async () => {
+        mockHappyPath({ category_id: "cat-a", category_name: "技术笔记" });
+        const user = userEvent.setup();
+        renderPage();
+        await screen.findByText("01 · 服务拆分");
+
+        const select = screen.getByLabelText("所属分类") as HTMLSelectElement;
+        expect(select.value).toBe("cat-a");
+
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "set_document_category") {
+                return null;
+            }
+            if (cmd === "get_document") {
+                return detail({ category_id: null, category_name: null });
+            }
+            if (cmd === "list_chunks") {
+                return [chunk(), chunk({ id: 2, label: "数据一致性", text: "第二段内容。" })];
+            }
+            if (cmd === "list_categories") {
+                return [{ id: "cat-a", name: "技术笔记", document_count: 1 }];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        await user.selectOptions(select, "");
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("set_document_category", { documentId: "doc1", categoryId: null });
+        });
     });
 });

@@ -34,6 +34,7 @@ pub fn ensure_db(vault: &Path) -> Result<(), String> {
     crate::settings::ensure_table(&conn)?;
     crate::documents::ensure_table(&conn)?;
     crate::qa::ensure_table(&conn)?;
+    crate::categories::ensure_table(&conn)?;
     Ok(())
 }
 
@@ -43,13 +44,14 @@ pub fn get_overview(vault: &Path) -> Result<Overview, String> {
     let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     let (total_documents, indexed_documents, pending_documents) = crate::documents::counts(&conn);
     let failed_documents = crate::documents::failed_count(&conn);
+    let categories = crate::categories::stats(&conn)?;
     Ok(Overview {
         total_documents,
         indexed_documents,
         pending_documents,
         failed_documents,
         storage_bytes: dir_size(vault),
-        categories: Vec::new(),
+        categories,
     })
 }
 
@@ -169,5 +171,41 @@ mod tests {
         assert_eq!(overview.total_documents, 2);
         assert_eq!(overview.failed_documents, 1);
         assert_eq!(overview.pending_documents, 2);
+    }
+
+    #[test]
+    fn test_get_overview_returns_category_stats() {
+        let tmp = TempDir::new().unwrap();
+        ensure_db(tmp.path()).unwrap();
+        let conn = Connection::open(db_path(tmp.path())).unwrap();
+        let a = crate::categories::create_category(tmp.path(), "A").unwrap();
+        let b = crate::categories::create_category(tmp.path(), "B").unwrap();
+        for (id, cid) in [
+            ("d1", Some(a.id.as_str())),
+            ("d2", Some(a.id.as_str())),
+            ("d3", Some(b.id.as_str())),
+        ] {
+            conn.execute(
+                "INSERT INTO documents (id, file_name, mime_type, type, sha1, size, content, status, created_at, updated_at, category_id)
+                 VALUES (?1, ?1, 'text/markdown', 'plaintext', ?2, 1, 'c', 'raw', 't', 't', ?3)",
+                rusqlite::params![id, format!("sha-{id}"), cid],
+            )
+            .unwrap();
+        }
+
+        let overview = get_overview(tmp.path()).unwrap();
+        assert_eq!(
+            overview.categories,
+            vec![
+                CategoryStat {
+                    name: "A".to_string(),
+                    count: 2,
+                },
+                CategoryStat {
+                    name: "B".to_string(),
+                    count: 1,
+                },
+            ]
+        );
     }
 }

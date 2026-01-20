@@ -7,6 +7,8 @@ export interface DocumentSummary {
     size: number;
     created_at: string;
     last_error: string | null;
+    category_id: string | null;
+    category_name: string | null;
 }
 
 export interface AddFailure {
@@ -62,6 +64,8 @@ export interface DocumentDetail {
     chunk_count: number | null;
     embedding_model: string | null;
     last_error: string | null;
+    category_id: string | null;
+    category_name: string | null;
     blob_path: string;
 }
 

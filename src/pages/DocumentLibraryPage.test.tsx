@@ -24,6 +24,8 @@ function doc(overrides: Partial<DocumentSummary>): DocumentSummary {
         size: 2202009,
         created_at: "2026-10-22T01:00:00Z",
         last_error: null,
+        category_id: null,
+        category_name: null,
         ...overrides,
     };
 }
@@ -33,7 +35,12 @@ const PROCESS_SUMMARY = { compiled: 1, compile_failures: 0, indexed: 1, index_fa
 beforeEach(() => {
     invokeMock.mockReset();
     openMock.mockReset();
-    invokeMock.mockResolvedValue([]);
+    invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === "list_categories") {
+            return [];
+        }
+        return [];
+    });
 });
 
 describe("DocumentLibraryPage", () => {
@@ -199,7 +206,12 @@ describe("DocumentLibraryPage", () => {
 
     it("runs batch compile+index from header button", async () => {
         const user = userEvent.setup();
-        invokeMock.mockResolvedValue([doc({ status: "raw" })]);
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_categories") {
+                return [];
+            }
+            return [doc({ status: "raw" })];
+        });
         render(
             <MemoryRouter>
                 <DocumentLibraryPage />
@@ -211,11 +223,104 @@ describe("DocumentLibraryPage", () => {
             if (cmd === "process_documents") {
                 return PROCESS_SUMMARY;
             }
+            if (cmd === "list_categories") {
+                return [];
+            }
             return [doc({ status: "indexed" })];
         });
         await user.click(screen.getByRole("button", { name: "编译并索引" }));
 
         expect(await screen.findByText(/处理完成：编译 1 · 索引 1/)).toBeTruthy();
         expect(invokeMock).toHaveBeenCalledWith("process_documents");
+    });
+
+    it("shows category badges and filters by category", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_categories") {
+                return [{ id: "cat-a", name: "技术笔记", document_count: 1 }];
+            }
+            return [
+                doc({ file_name: "a.md", category_id: "cat-a", category_name: "技术笔记" }),
+                doc({ id: "doc2", file_name: "b.md" }),
+            ];
+        });
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
+        expect(await screen.findByText("a.md")).toBeTruthy();
+        // 分类名同时出现在筛选下拉与行徽标中
+        expect(screen.getAllByText("技术笔记").length).toBe(2);
+        expect(screen.getByText("未分类")).toBeTruthy();
+
+        // 按分类筛选：只剩分类内文档
+        await user.selectOptions(screen.getByLabelText("分类筛选"), "cat-a");
+        expect(screen.getByText("a.md")).toBeTruthy();
+        expect(screen.queryByText("b.md")).toBeNull();
+
+        // 切回全部分类
+        await user.selectOptions(screen.getByLabelText("分类筛选"), "");
+        expect(screen.getByText("b.md")).toBeTruthy();
+    });
+
+    it("shows empty hint when the selected category has no documents", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_categories") {
+                return [{ id: "cat-x", name: "空分类", document_count: 0 }];
+            }
+            return [doc({ file_name: "a.md" })];
+        });
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
+        await screen.findByText("a.md");
+
+        await user.selectOptions(screen.getByLabelText("分类筛选"), "cat-x");
+
+        expect(await screen.findByText("该分类下暂无文档")).toBeTruthy();
+    });
+
+    it("imports files into the selected category", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_categories") {
+                return [{ id: "cat-a", name: "技术笔记", document_count: 0 }];
+            }
+            return [];
+        });
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
+        await screen.findByText("暂无文档，点击右上角导入文档添加");
+
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_categories") {
+                return [{ id: "cat-a", name: "技术笔记", document_count: 1 }];
+            }
+            if (cmd === "add_documents") {
+                return { added: 1, skipped: 0, failures: [] };
+            }
+            if (cmd === "process_documents") {
+                return PROCESS_SUMMARY;
+            }
+            return [doc({ file_name: "a.md", category_id: "cat-a", category_name: "技术笔记" })];
+        });
+        openMock.mockResolvedValue(["C:\\docs\\a.md"]);
+        await user.selectOptions(screen.getByLabelText("导入分类"), "技术笔记");
+        await user.click(screen.getByRole("button", { name: "导入文档" }));
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("add_documents", {
+                paths: ["C:\\docs\\a.md"],
+                categoryName: "技术笔记",
+            });
+        });
     });
 });

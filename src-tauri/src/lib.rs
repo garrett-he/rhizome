@@ -1,3 +1,4 @@
+mod categories;
 mod compile;
 mod db;
 mod documents;
@@ -49,8 +50,39 @@ fn get_overview() -> Result<db::Overview, String> {
 }
 
 #[tauri::command]
-fn add_documents(paths: Vec<String>) -> Result<documents::AddSummary, String> {
-    Ok(documents::add_batch(Path::new(&current_vault()?), &paths))
+fn add_documents(paths: Vec<String>, category_name: Option<String>) -> Result<documents::AddSummary, String> {
+    let vault = current_vault()?;
+    let category_id = match category_name.as_deref() {
+        // 分类名非空时解析（不存在自动创建）；空串视为未指定
+        Some(name) if !name.trim().is_empty() => Some(categories::ensure_category(Path::new(&vault), name)?),
+        _ => None,
+    };
+    Ok(documents::add_batch(Path::new(&vault), &paths, category_id.as_deref()))
+}
+
+#[tauri::command]
+fn create_category(name: String) -> Result<categories::CategorySummary, String> {
+    categories::create_category(Path::new(&current_vault()?), &name)
+}
+
+#[tauri::command]
+fn list_categories() -> Result<Vec<categories::CategorySummary>, String> {
+    categories::list_categories(Path::new(&current_vault()?))
+}
+
+#[tauri::command]
+fn rename_category(id: String, name: String) -> Result<categories::CategorySummary, String> {
+    categories::rename_category(Path::new(&current_vault()?), &id, &name)
+}
+
+#[tauri::command]
+fn delete_category(id: String) -> Result<categories::DeleteOutcome, String> {
+    categories::delete_category(Path::new(&current_vault()?), &id)
+}
+
+#[tauri::command]
+fn set_document_category(document_id: String, category_id: Option<String>) -> Result<(), String> {
+    documents::set_category(Path::new(&current_vault()?), &document_id, category_id.as_deref())
 }
 
 #[tauri::command]
@@ -280,6 +312,11 @@ pub fn run() {
             list_documents,
             get_document,
             list_chunks,
+            create_category,
+            list_categories,
+            rename_category,
+            delete_category,
+            set_document_category,
             search_documents,
             qa_ask,
             list_conversations,

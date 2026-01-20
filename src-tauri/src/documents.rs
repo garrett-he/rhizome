@@ -31,6 +31,9 @@ pub const TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS documents (
     last_error TEXT
 );";
 
+/// 文档分类关联索引（幂等建，category_id 补列之后执行）
+pub const CATEGORY_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_documents_category_id ON documents(category_id);";
+
 /// 旧库（最小列集）幂等补列：(列名, 列声明)
 const MIGRATION_COLUMNS: &[(&str, &str)] = &[
     ("content_compiled", "TEXT"),
@@ -41,6 +44,7 @@ const MIGRATION_COLUMNS: &[(&str, &str)] = &[
     ("chunk_count", "INTEGER"),
     ("embedding_model", "TEXT"),
     ("last_error", "TEXT"),
+    ("category_id", "TEXT"),
 ];
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -54,6 +58,9 @@ pub struct DocumentSummary {
     pub size: u64,
     pub created_at: String,
     pub last_error: Option<String>,
+    /// 所属分类（LEFT JOIN categories 取名）
+    pub category_id: Option<String>,
+    pub category_name: Option<String>,
 }
 
 /// 文档详情（详情页全量数据）。
@@ -78,6 +85,9 @@ pub struct DocumentDetail {
     pub chunk_count: Option<i64>,
     pub embedding_model: Option<String>,
     pub last_error: Option<String>,
+    /// 所属分类（LEFT JOIN categories 取名）
+    pub category_id: Option<String>,
+    pub category_name: Option<String>,
     /// blob 原始文件绝对路径（打开原始文件用）
     pub blob_path: String,
 }
@@ -104,7 +114,9 @@ enum AddOutcome {
 pub fn ensure_table(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(TABLE_SQL)
         .map_err(|e| format!("初始化 documents 表失败: {e}"))?;
-    migrate_columns(conn)
+    migrate_columns(conn)?;
+    conn.execute_batch(CATEGORY_INDEX_SQL)
+        .map_err(|e| format!("创建 documents 分类索引失败: {e}"))
 }
 
 /// 对旧库幂等补列：按 PRAGMA table_info 检查缺失列再 ALTER TABLE ADD COLUMN
@@ -157,7 +169,7 @@ fn blob_path(vault: &Path, sha1: &str) -> PathBuf {
 
 /// 添加单个文档（对齐 deprecated add 流程）：sha1 去重跳过、UTF-8 lossy 读全文、
 /// 复制原文到 blobs 分片目录、插入 status='raw' 行；DB 插入失败回滚删除 blob。
-fn add(vault: &Path, path: &str) -> Result<AddOutcome, String> {
+fn add(vault: &Path, path: &str, category_id: Option<&str>) -> Result<AddOutcome, String> {
     let trimmed = path.trim();
     let source = Path::new(trimmed);
     let Some(mime_type) = detect_mime(source) else {
@@ -192,9 +204,9 @@ fn add(vault: &Path, path: &str) -> Result<AddOutcome, String> {
     let id = Uuid::new_v4().to_string().replace('-', "");
     let now = now_rfc3339();
     let result = conn.execute(
-        "INSERT INTO documents (id, file_name, mime_type, type, sha1, size, content, status, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'plaintext', ?4, ?5, ?6, 'raw', ?7, ?7)",
-        rusqlite::params![id, file_name, mime_type, digest, size, content, now],
+        "INSERT INTO documents (id, file_name, mime_type, type, sha1, size, content, status, created_at, updated_at, category_id)
+         VALUES (?1, ?2, ?3, 'plaintext', ?4, ?5, ?6, 'raw', ?7, ?7, ?8)",
+        rusqlite::params![id, file_name, mime_type, digest, size, content, now, category_id],
     );
     if let Err(e) = result {
         let _ = fs::remove_file(&blob);
@@ -203,15 +215,15 @@ fn add(vault: &Path, path: &str) -> Result<AddOutcome, String> {
     Ok(AddOutcome::Added { id })
 }
 
-/// 批量添加：逐个执行，单文件失败不中断批次
-pub fn add_batch(vault: &Path, paths: &[String]) -> AddSummary {
+/// 批量添加：逐个执行，单文件失败不中断批次；可选统一归入指定分类
+pub fn add_batch(vault: &Path, paths: &[String], category_id: Option<&str>) -> AddSummary {
     let mut summary = AddSummary {
         added: 0,
         skipped: 0,
         failures: Vec::new(),
     };
     for path in paths {
-        match add(vault, path) {
+        match add(vault, path, category_id) {
             Ok(AddOutcome::Added { .. }) => summary.added += 1,
             Ok(AddOutcome::Skipped { .. }) => summary.skipped += 1,
             Err(error) => summary.failures.push(AddFailure {
@@ -226,10 +238,13 @@ pub fn add_batch(vault: &Path, paths: &[String]) -> AddSummary {
 pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
     let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     ensure_table(&conn)?;
+    crate::categories::ensure_table(&conn)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, file_name, mime_type, type, status, size, created_at, last_error
-             FROM documents ORDER BY created_at DESC",
+            "SELECT d.id, d.file_name, d.mime_type, d.type, d.status, d.size, d.created_at, d.last_error,
+                    d.category_id, c.name
+             FROM documents d LEFT JOIN categories c ON c.id = d.category_id
+             ORDER BY d.created_at DESC",
         )
         .map_err(|e| format!("查询失败: {e}"))?;
     let rows = stmt
@@ -243,6 +258,8 @@ pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
                 size: row.get::<_, i64>(5)?.max(0) as u64,
                 created_at: row.get(6)?,
                 last_error: row.get(7)?,
+                category_id: row.get(8)?,
+                category_name: row.get(9)?,
             })
         })
         .map_err(|e| format!("查询失败: {e}"))?;
@@ -254,12 +271,14 @@ pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
 pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
     let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     ensure_table(&conn)?;
+    crate::categories::ensure_table(&conn)?;
     let detail = conn
         .query_row(
-            "SELECT id, file_name, mime_type, type, sha1, size, status, content, content_compiled,
-                    metadata_compiled, created_at, updated_at, compiled_at, llm_model, indexed_at,
-                    chunk_count, embedding_model, last_error
-             FROM documents WHERE id = ?1",
+            "SELECT d.id, d.file_name, d.mime_type, d.type, d.sha1, d.size, d.status, d.content, d.content_compiled,
+                    d.metadata_compiled, d.created_at, d.updated_at, d.compiled_at, d.llm_model, d.indexed_at,
+                    d.chunk_count, d.embedding_model, d.last_error, d.category_id, c.name
+             FROM documents d LEFT JOIN categories c ON c.id = d.category_id
+             WHERE d.id = ?1",
             [id],
             |row| {
                 Ok(DocumentDetail {
@@ -281,6 +300,8 @@ pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
                     chunk_count: row.get(15)?,
                     embedding_model: row.get(16)?,
                     last_error: row.get(17)?,
+                    category_id: row.get(18)?,
+                    category_name: row.get(19)?,
                     blob_path: String::new(),
                 })
             },
@@ -292,6 +313,32 @@ pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
         blob_path: blob_path(vault, &detail.sha1).to_string_lossy().into_owned(),
         ..detail
     })
+}
+
+/// 设置/更换/清除文档分类（category_id 为 None 时清除）；文档或分类不存在返回 Err。
+pub fn set_category(vault: &Path, document_id: &str, category_id: Option<&str>) -> Result<(), String> {
+    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    ensure_table(&conn)?;
+    crate::categories::ensure_table(&conn)?;
+    if let Some(cid) = category_id {
+        let exists: Option<i64> = conn
+            .query_row("SELECT 1 FROM categories WHERE id = ?1", [cid], |row| row.get(0))
+            .optional()
+            .map_err(|e| format!("查询失败: {e}"))?;
+        if exists.is_none() {
+            return Err(format!("分类不存在: {cid}"));
+        }
+    }
+    let updated = conn
+        .execute(
+            "UPDATE documents SET category_id = ?1 WHERE id = ?2",
+            rusqlite::params![category_id, document_id],
+        )
+        .map_err(|e| format!("写入数据库失败: {e}"))?;
+    if updated == 0 {
+        return Err(format!("文档不存在: {document_id}"));
+    }
+    Ok(())
 }
 
 /// (total, indexed, pending)；documents 表缺失时全部为 0（防御旧库未迁移）
@@ -360,7 +407,7 @@ mod tests {
         let tmp = setup();
         let file = write_file(tmp.path(), "notes.md", b"# hello");
 
-        match add(tmp.path(), file.to_str().unwrap()).unwrap() {
+        match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
             AddOutcome::Added { id } => assert_eq!(id.len(), 32),
             other => panic!("期望 Added，实际 {other:?}"),
         }
@@ -395,7 +442,7 @@ mod tests {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.txt", b"content");
 
-        add(tmp.path(), file.to_str().unwrap()).unwrap();
+        add(tmp.path(), file.to_str().unwrap(), None).unwrap();
 
         let conn = Connection::open(db_path(tmp.path())).unwrap();
         let sha1: String = conn
@@ -410,8 +457,8 @@ mod tests {
     fn test_add_duplicate_is_skipped() {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.txt", b"same");
-        let first = add(tmp.path(), file.to_str().unwrap()).unwrap();
-        let second = add(tmp.path(), file.to_str().unwrap()).unwrap();
+        let first = add(tmp.path(), file.to_str().unwrap(), None).unwrap();
+        let second = add(tmp.path(), file.to_str().unwrap(), None).unwrap();
 
         match (first, second) {
             (AddOutcome::Added { id: a }, AddOutcome::Skipped { id: b }) => assert_eq!(a, b),
@@ -428,7 +475,7 @@ mod tests {
     fn test_add_unsupported_extension_fails() {
         let tmp = setup();
         let file = write_file(tmp.path(), "image.png", b"\x89PNG");
-        let err = add(tmp.path(), file.to_str().unwrap()).unwrap_err();
+        let err = add(tmp.path(), file.to_str().unwrap(), None).unwrap_err();
 
         assert!(err.contains("不支持的文件类型"));
         let conn = Connection::open(db_path(tmp.path())).unwrap();
@@ -441,7 +488,7 @@ mod tests {
     #[test]
     fn test_add_missing_file_fails() {
         let tmp = setup();
-        let err = add(tmp.path(), tmp.path().join("nope.md").to_str().unwrap()).unwrap_err();
+        let err = add(tmp.path(), tmp.path().join("nope.md").to_str().unwrap(), None).unwrap_err();
         assert!(err.contains("读取文件失败"));
     }
 
@@ -468,7 +515,7 @@ mod tests {
             "missing.md".to_string(),
         ];
 
-        let summary = add_batch(tmp.path(), &paths);
+        let summary = add_batch(tmp.path(), &paths, None);
         assert_eq!(summary.added, 2);
         assert_eq!(summary.skipped, 0);
         assert_eq!(summary.failures.len(), 2);
@@ -484,6 +531,7 @@ mod tests {
         add_batch(
             tmp.path(),
             &[a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()],
+            None,
         );
 
         let docs = list(tmp.path()).unwrap();
@@ -496,7 +544,7 @@ mod tests {
     fn test_get_detail_returns_full_record() {
         let tmp = setup();
         let file = write_file(tmp.path(), "notes.md", b"# hello");
-        let id = match add(tmp.path(), file.to_str().unwrap()).unwrap() {
+        let id = match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
             AddOutcome::Added { id } => id,
             other => panic!("期望 Added，实际 {other:?}"),
         };
@@ -539,6 +587,7 @@ mod tests {
         add_batch(
             tmp.path(),
             &[a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()],
+            None,
         );
 
         let conn = Connection::open(db_path(tmp.path())).unwrap();
@@ -591,12 +640,83 @@ mod tests {
     fn test_list_returns_last_error() {
         let tmp = setup();
         let file = write_file(tmp.path(), "a.md", b"a");
-        add(tmp.path(), file.to_str().unwrap()).unwrap();
+        add(tmp.path(), file.to_str().unwrap(), None).unwrap();
         let conn = Connection::open(db_path(tmp.path())).unwrap();
         conn.execute("UPDATE documents SET last_error = 'compile: boom'", [])
             .unwrap();
 
         let docs = list(tmp.path()).unwrap();
         assert_eq!(docs[0].last_error.as_deref(), Some("compile: boom"));
+    }
+
+    #[test]
+    fn test_add_with_category_and_list_shows_name() {
+        let tmp = setup();
+        let category = crate::categories::create_category(tmp.path(), "技术笔记").unwrap();
+        let file = write_file(tmp.path(), "a.md", b"a");
+        add(tmp.path(), file.to_str().unwrap(), Some(&category.id)).unwrap();
+        let file2 = write_file(tmp.path(), "b.md", b"b");
+        add(tmp.path(), file2.to_str().unwrap(), None).unwrap();
+
+        let docs = list(tmp.path()).unwrap();
+        assert_eq!(docs.len(), 2);
+        let with_category = docs.iter().find(|d| d.file_name == "a.md").unwrap();
+        let without = docs.iter().find(|d| d.file_name == "b.md").unwrap();
+        assert_eq!(with_category.category_id.as_deref(), Some(category.id.as_str()));
+        assert_eq!(with_category.category_name.as_deref(), Some("技术笔记"));
+        assert_eq!(without.category_id, None);
+        assert_eq!(without.category_name, None);
+    }
+
+    #[test]
+    fn test_get_detail_shows_category_name() {
+        let tmp = setup();
+        let category = crate::categories::create_category(tmp.path(), "会议记录").unwrap();
+        let file = write_file(tmp.path(), "a.md", b"a");
+        add(tmp.path(), file.to_str().unwrap(), Some(&category.id)).unwrap();
+        let docs = list(tmp.path()).unwrap();
+
+        let detail = get_detail(tmp.path(), &docs[0].id).unwrap();
+        assert_eq!(detail.category_id.as_deref(), Some(category.id.as_str()));
+        assert_eq!(detail.category_name.as_deref(), Some("会议记录"));
+    }
+
+    #[test]
+    fn test_set_category_update_and_clear() {
+        let tmp = setup();
+        let category = crate::categories::create_category(tmp.path(), "技术笔记").unwrap();
+        let file = write_file(tmp.path(), "a.md", b"a");
+        let id = match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
+            AddOutcome::Added { id } => id,
+            other => panic!("期望 Added，实际 {other:?}"),
+        };
+
+        set_category(tmp.path(), &id, Some(&category.id)).unwrap();
+        let detail = get_detail(tmp.path(), &id).unwrap();
+        assert_eq!(detail.category_name.as_deref(), Some("技术笔记"));
+
+        set_category(tmp.path(), &id, None).unwrap();
+        let detail = get_detail(tmp.path(), &id).unwrap();
+        assert_eq!(detail.category_id, None);
+        assert_eq!(detail.category_name, None);
+    }
+
+    #[test]
+    fn test_set_category_missing_document_is_error() {
+        let tmp = setup();
+        let err = set_category(tmp.path(), "nope", None).unwrap_err();
+        assert_eq!(err, "文档不存在: nope");
+    }
+
+    #[test]
+    fn test_set_category_missing_category_is_error() {
+        let tmp = setup();
+        let file = write_file(tmp.path(), "a.md", b"a");
+        let id = match add(tmp.path(), file.to_str().unwrap(), None).unwrap() {
+            AddOutcome::Added { id } => id,
+            other => panic!("期望 Added，实际 {other:?}"),
+        };
+        let err = set_category(tmp.path(), &id, Some("nope")).unwrap_err();
+        assert_eq!(err, "分类不存在: nope");
     }
 }

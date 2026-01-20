@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
+import { useCategories } from "@/hooks/useCategories";
 import { useDocumentDetail } from "@/hooks/useDocumentDetail";
+import { setDocumentCategory } from "@/lib/categories";
 import { compileDocuments, indexDocuments, revealBlob } from "@/lib/documents";
 import { formatBytes, formatShortDate } from "@/lib/format";
 import { charCount, shortSha1, splitByChunkMarkers } from "@/lib/markdown";
@@ -60,6 +62,7 @@ type ViewMode = "rendered" | "raw";
 export function DocumentDetailPage() {
     const { id = "" } = useParams();
     const { detail, chunks, loading, error, refresh } = useDocumentDetail(id);
+    const { categories } = useCategories();
 
     const [viewMode, setViewMode] = useState<ViewMode>("rendered");
     const [busy, setBusy] = useState<string | null>(null);
@@ -174,6 +177,12 @@ export function DocumentDetailPage() {
         });
     };
 
+    const handleCategoryChange = (value: string) => {
+        void runAction("category", async () => {
+            await setDocumentCategory(detail.id, value === "" ? null : value);
+        });
+    };
+
     return (
         <div className="flex h-full flex-col gap-4 overflow-y-auto p-8">
             <nav aria-label="面包屑" className="flex items-center gap-1 text-[13px]">
@@ -246,6 +255,23 @@ export function DocumentDetailPage() {
                     {detail.chunk_count !== null ? ` · ${detail.chunk_count} chunks` : ""}
                     {detail.embedding_model !== null ? ` · ${detail.embedding_model}` : ""}
                 </p>
+                <div className="flex items-center gap-2">
+                    <span className="text-[13px] text-muted-foreground">分类</span>
+                    <select
+                        aria-label="所属分类"
+                        value={detail.category_id ?? ""}
+                        disabled={busy !== null}
+                        onChange={(event) => handleCategoryChange(event.target.value)}
+                        className="h-8 rounded-md border border-neutral-200 bg-neutral-50 px-2 text-[13px] text-neutral-950 outline-none transition-colors focus:border-neutral-400 disabled:opacity-50"
+                    >
+                        <option value="">未分类</option>
+                        {categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                                {category.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
             </Card>
 
             {(actionError !== null || hasError) && (

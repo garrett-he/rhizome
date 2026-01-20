@@ -18,8 +18,8 @@ export async function listDocuments(): Promise<DocumentSummary[]> {
     return invoke<DocumentSummary[]>("list_documents");
 }
 
-export async function addDocuments(paths: string[]): Promise<AddSummary> {
-    return invoke<AddSummary>("add_documents", { paths });
+export async function addDocuments(paths: string[], categoryName?: string): Promise<AddSummary> {
+    return invoke<AddSummary>("add_documents", { paths, categoryName: categoryName ?? null });
 }
 
 export async function getDocument(id: string): Promise<DocumentDetail> {
