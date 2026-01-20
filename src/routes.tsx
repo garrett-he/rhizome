@@ -8,6 +8,7 @@ import { QaPage } from "./pages/QaPage";
 import { RootPage } from "./pages/RootPage";
 import { SearchPage } from "./pages/SearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { TasksPage } from "./pages/TasksPage";
 
 export const routes: RouteObject[] = [
     {
@@ -20,6 +21,7 @@ export const routes: RouteObject[] = [
             { path: "search", element: <SearchPage /> },
             { path: "qa", element: <QaPage /> },
             { path: "categories", element: <CategoriesPage /> },
+            { path: "tasks", element: <TasksPage /> },
             { path: "settings", element: <SettingsPage /> },
         ],
     },

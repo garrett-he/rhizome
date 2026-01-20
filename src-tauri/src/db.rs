@@ -35,6 +35,7 @@ pub fn ensure_db(vault: &Path) -> Result<(), String> {
     crate::documents::ensure_table(&conn)?;
     crate::qa::ensure_table(&conn)?;
     crate::categories::ensure_table(&conn)?;
+    crate::jobs::ensure_table(&conn)?;
     Ok(())
 }
 

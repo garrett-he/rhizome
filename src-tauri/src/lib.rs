@@ -6,12 +6,14 @@ mod embedding;
 mod index_db;
 mod indexer;
 mod indexing;
+mod jobs;
 mod llm;
 mod logging;
 mod profiles;
 mod qa;
 mod search;
 mod settings;
+mod tasks;
 
 use std::path::{Path, PathBuf};
 
@@ -199,6 +201,66 @@ fn list_messages(conversation_id: String) -> Result<Vec<qa::Message>, String> {
     qa::list_messages(Path::new(&current_vault()?), &conversation_id)
 }
 
+/// 任务进度事件的 Tauri 实现：转发到前端监听（payload serde_json::Value）。
+struct TauriTaskEvents {
+    app: tauri::AppHandle,
+}
+
+impl TauriTaskEvents {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        use tauri::Emitter;
+        if let Err(e) = self.app.emit(event, payload) {
+            logging::log("ERROR", &format!("task 事件发送失败 {event}: {e}"));
+        }
+    }
+}
+
+impl tasks::TaskEvents for TauriTaskEvents {
+    fn start(&self, job_id: &str, kind: &str, total: u64) {
+        self.emit(
+            "task-start",
+            serde_json::json!({ "job_id": job_id, "kind": kind, "total": total }),
+        );
+    }
+
+    fn item(&self, job_id: &str, document_id: &str, step: &str, ok: bool, error: Option<&str>) {
+        self.emit(
+            "task-item",
+            serde_json::json!({ "job_id": job_id, "document_id": document_id, "step": step, "ok": ok, "error": error }),
+        );
+    }
+
+    fn done(&self, job_id: &str, succeeded: u64, failed: u64) {
+        self.emit(
+            "task-done",
+            serde_json::json!({ "job_id": job_id, "succeeded": succeeded, "failed": failed }),
+        );
+    }
+}
+
+/// 批量执行任务（step：compile/index/all）；事件先于命令 resolve 到达。
+#[tauri::command]
+async fn run_tasks(
+    app: tauri::AppHandle,
+    document_ids: Vec<String>,
+    step: String,
+) -> Result<tasks::TaskSummary, String> {
+    let vault = current_vault()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let events = TauriTaskEvents { app };
+        tasks::run_batch_from_settings(&vault, &events, &document_ids, &step)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?;
+    log_command_result("run_tasks", &result);
+    result
+}
+
+#[tauri::command]
+fn list_jobs() -> Result<Vec<jobs::JobRecord>, String> {
+    jobs::list_jobs(Path::new(&current_vault()?), 10)
+}
+
 /// 混合检索（向量 KNN + FTS trigram RRF 融合）；向量腿失败降级仅 FTS。
 #[tauri::command]
 async fn search_documents(query: String, limit: Option<u32>) -> Result<Vec<search::SearchHit>, String> {
@@ -317,6 +379,8 @@ pub fn run() {
             rename_category,
             delete_category,
             set_document_category,
+            run_tasks,
+            list_jobs,
             search_documents,
             qa_ask,
             list_conversations,
