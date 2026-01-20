@@ -25,14 +25,14 @@ describe("AppShell", () => {
         expect(screen.getByText("overview-content")).toBeTruthy();
     });
 
-    it("enables navigation for overview, documents and settings only", () => {
+    it("enables navigation for overview, documents, search, qa and settings only", () => {
         renderShell();
 
         expect(screen.getByRole("button", { name: "总览" })).not.toBeDisabled();
         expect(screen.getByRole("button", { name: "文档库" })).not.toBeDisabled();
+        expect(screen.getByRole("button", { name: "搜索" })).not.toBeDisabled();
+        expect(screen.getByRole("button", { name: "问答" })).not.toBeDisabled();
         expect(screen.getByRole("button", { name: "设置" })).not.toBeDisabled();
-        expect(screen.getByRole("button", { name: "搜索" })).toBeDisabled();
-        expect(screen.getByRole("button", { name: "问答" })).toBeDisabled();
         expect(screen.getByRole("button", { name: "分类管理" })).toBeDisabled();
         expect(screen.getByRole("button", { name: "任务中心" })).toBeDisabled();
     });

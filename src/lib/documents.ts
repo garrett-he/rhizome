@@ -9,6 +9,7 @@ import type {
     DocumentSummary,
     IndexOutcome,
     ProcessSummary,
+    SearchHit,
 } from "@/types/document";
 
 const TEXT_FILTERS = [{ name: "纯文本", extensions: ["md", "txt", "srt"] }];
@@ -43,6 +44,10 @@ export async function indexDocuments(documentIds: string[]): Promise<IndexOutcom
 
 export async function processDocuments(): Promise<ProcessSummary> {
     return invoke<ProcessSummary>("process_documents");
+}
+
+export async function searchDocuments(query: string, limit?: number): Promise<SearchHit[]> {
+    return invoke<SearchHit[]>("search_documents", { query, limit });
 }
 
 export async function pickFiles(): Promise<string[]> {

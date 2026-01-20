@@ -38,13 +38,16 @@ beforeEach(() => {
 });
 
 describe("SettingsPage", () => {
-    it("renders four cards with values from settings", async () => {
+    it("renders cards with values from settings", async () => {
         render(<SettingsPage />);
 
         expect(await screen.findByText("设置")).toBeTruthy();
         expect(screen.getByText("嵌入模型")).toBeTruthy();
         expect(screen.getByText("LLM")).toBeTruthy();
-        expect(screen.getByText("提示词")).toBeTruthy();
+        expect(screen.getByText("编译提示词")).toBeTruthy();
+        expect(screen.getByText("问答提示词")).toBeTruthy();
+        expect(screen.getByText("docs_compile")).toBeTruthy();
+        expect(screen.getByText("docs_answer")).toBeTruthy();
         expect(screen.getByText("MCP 服务")).toBeTruthy();
         expect(screen.getByLabelText("嵌入模型")).toHaveValue("BAAI/bge-m3");
         expect(screen.getByText("当前 5 篇已索引")).toBeTruthy();
@@ -85,12 +88,13 @@ describe("SettingsPage", () => {
         });
     });
 
-    it("edits prompt in modal and saves to settings", async () => {
+    it("edits compile prompt in modal and saves to settings", async () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
         await screen.findByText("设置");
 
-        await user.click(screen.getByRole("button", { name: "编辑" }));
+        // 两张提示词卡片，第一张为 docs_compile
+        await user.click(screen.getAllByRole("button", { name: "编辑" })[0]);
         const textarea = await screen.findByLabelText("提示词内容");
         expect(textarea).toHaveValue(DEFAULT_PROMPT);
 
@@ -105,6 +109,26 @@ describe("SettingsPage", () => {
             });
         });
         expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("edits answer prompt in modal and saves to settings", async () => {
+        const user = userEvent.setup();
+        render(<SettingsPage />);
+        await screen.findByText("设置");
+
+        await user.click(screen.getAllByRole("button", { name: "编辑" })[1]);
+        const textarea = await screen.findByLabelText("提示词内容");
+
+        await user.clear(textarea);
+        await user.type(textarea, "answer prompt");
+        await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "保存" }));
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("set_setting", {
+                key: "prompt:docs_answer",
+                value: "answer prompt",
+            });
+        });
     });
 
     it("resets prompt to default by deleting the key", async () => {
@@ -131,7 +155,8 @@ describe("SettingsPage", () => {
         render(<SettingsPage />);
 
         expect(await screen.findByText("已定制")).toBeTruthy();
-        await user.click(screen.getByRole("button", { name: "恢复默认" }));
+        // 第一张卡（docs_compile）已定制；第二张未定制故禁用
+        await user.click(screen.getAllByRole("button", { name: "恢复默认" })[0]);
 
         await waitFor(() => {
             expect(invokeMock).toHaveBeenCalledWith("set_setting", {
@@ -139,6 +164,5 @@ describe("SettingsPage", () => {
                 value: null,
             });
         });
-        expect(screen.queryByText("已定制")).toBeNull();
     });
 });

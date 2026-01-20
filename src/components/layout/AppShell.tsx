@@ -159,8 +159,8 @@ export function AppShell({ vaultPath, vaults = [], onSwitchVault, children }: Ap
                     <SectionTitle label="工作区" />
                     <NavItem icon={LayoutDashboard} label="总览" to="/" />
                     <NavItem icon={Library} label="文档库" to="/documents" />
-                    <NavItem icon={Search} label="搜索" />
-                    <NavItem icon={MessageCircle} label="问答" />
+                    <NavItem icon={Search} label="搜索" to="/search" />
+                    <NavItem icon={MessageCircle} label="问答" to="/qa" />
                     <SectionTitle label="管理" />
                     <NavItem icon={Tags} label="分类管理" />
                     <NavItem icon={ListChecks} label="任务中心" />

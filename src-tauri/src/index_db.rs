@@ -55,8 +55,8 @@ pub fn ensure_chunks_table(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("初始化 chunks 表失败: {e}"))
 }
 
-/// 读取已记录的嵌入维度（未记录为 None）。
-fn stored_dimension(conn: &Connection) -> Result<Option<usize>, String> {
+/// 读取已记录的嵌入维度（未记录为 None）。检索向量腿做维度校验用。
+pub fn stored_dimension(conn: &Connection) -> Result<Option<usize>, String> {
     conn.query_row(
         "SELECT value FROM index_meta WHERE key = ?1",
         [INDEX_META_DIMENSION_KEY],

@@ -1,7 +1,7 @@
 import { Boxes, ExternalLink, Loader2, RefreshCw, WandSparkles } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import { Alert, AlertDescription, AlertIcon, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +66,27 @@ export function DocumentDetailPage() {
     const [actionError, setActionError] = useState<string | null>(null);
     const [selectedChunkId, setSelectedChunkId] = useState<number | null>(null);
     const sectionRefs = useRef<Map<number, HTMLElement>>(new Map());
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // 搜索页「展开全文」通过 ?chunk=<id> 初始定位：数据加载完成后选中并滚动，
+    // 随后一次性消费该参数（replace 不留历史）
+    useEffect(() => {
+        if (detail === null || chunks.length === 0) {
+            return;
+        }
+        const chunkParam = searchParams.get("chunk");
+        if (chunkParam === null) {
+            return;
+        }
+        const chunkId = Number(chunkParam);
+        const index = chunks.findIndex((chunk) => chunk.id === chunkId);
+        if (Number.isFinite(chunkId) && index >= 0) {
+            setSelectedChunkId(chunkId);
+            // 默认渲染视图已随本次提交渲染，refs 已填充
+            sectionRefs.current.get(index)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        setSearchParams({}, { replace: true });
+    }, [detail, chunks, searchParams, setSearchParams]);
 
     if (loading) {
         return <div className="flex flex-1 items-center justify-center p-8 text-[13px] text-neutral-500">加载中…</div>;

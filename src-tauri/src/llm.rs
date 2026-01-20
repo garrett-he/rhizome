@@ -97,6 +97,93 @@ fn truncate(text: &str, max: usize) -> String {
     format!("{head}…")
 }
 
+/// 流式 chat：每收到一个 delta 回调一次，返回拼接后的完整文本。
+pub trait StreamLlmClient: Send + Sync {
+    ///
+    /// # Arguments
+    /// * `prompt` - 完整提示词（单轮 user 消息）
+    /// * `on_delta` - 每个增量文本片段回调
+    fn chat_stream(&self, prompt: &str, on_delta: &mut dyn FnMut(&str)) -> Result<String, String>;
+}
+
+impl StreamLlmClient for OpenAiClient {
+    /// `stream: true` 请求 + SSE 逐行解析（blocking Response 逐块迭代）。
+    /// 行解析容错：单行 JSON 失败仅 log 跳过，不中断整个流。
+    fn chat_stream(&self, prompt: &str, on_delta: &mut dyn FnMut(&str)) -> Result<String, String> {
+        let url = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": true,
+        });
+        let response = match self
+            .http
+            .post(&url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body)
+            .send()
+        {
+            Ok(response) => response,
+            Err(e) => {
+                crate::logging::log("ERROR", &format!("LLM 流式请求失败: {url}: {e}"));
+                return Err(format!("LLM 请求失败: {e}"));
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().unwrap_or_default();
+            let message = format!("LLM 返回 {status}: {}", truncate(&text, 300));
+            crate::logging::log("ERROR", &format!("LLM 流式请求失败: {url}: {message}"));
+            return Err(message);
+        }
+
+        let mut full = String::new();
+        // blocking Response 实现 io::Read：BufRead::read_line 逐行读取，实现真流式
+        let mut reader = std::io::BufReader::new(response);
+        loop {
+            let mut line = String::new();
+            match std::io::BufRead::read_line(&mut reader, &mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if let Some(delta) = parse_sse_line(line.trim_end_matches(['\n', '\r'])) {
+                        on_delta(&delta);
+                        full.push_str(&delta);
+                    }
+                }
+                Err(e) => {
+                    crate::logging::log("ERROR", &format!("LLM 流式读取失败: {url}: {e}"));
+                    return Err(format!("LLM 响应读取失败: {e}"));
+                }
+            }
+        }
+        if full.is_empty() {
+            let message = "LLM 流式响应为空".to_string();
+            crate::logging::log("ERROR", &format!("LLM 流式请求失败: {url}: {message}"));
+            return Err(message);
+        }
+        Ok(full)
+    }
+}
+
+/// 解析一行 SSE：`data: {...}` 取 `choices[0].delta.content`；`[DONE]` 返回 None。
+fn parse_sse_line(line: &str) -> Option<String> {
+    let payload = line.strip_prefix("data: ")?;
+    let payload = payload.trim();
+    if payload == "[DONE]" || payload.is_empty() {
+        return None;
+    }
+    match serde_json::from_str::<Value>(payload) {
+        Ok(json) => json
+            .pointer("/choices/0/delta/content")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        Err(e) => {
+            crate::logging::log("ERROR", &format!("SSE 行解析失败（已跳过）: {e}"));
+            None
+        }
+    }
+}
+
 /// 单个文档的编译结果。
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct CompileOutcome {
@@ -420,6 +507,59 @@ mod tests {
 
     #[test]
     fn test_model_returns_configured_name() {
-        assert_eq!(client("http://127.0.0.1:1".to_string()).model(), "test-model");
+        assert_eq!(
+            LlmClient::model(&client("http://127.0.0.1:1".to_string())),
+            "test-model"
+        );
+    }
+
+    // ---------- chat_stream（SSE 流式） ----------
+
+    #[test]
+    fn test_chat_stream_collects_deltas_in_order() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n\
+                    data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n\
+                    data: [DONE]\n\n";
+        let url = spawn_once("HTTP/1.1 200 OK", body);
+        let mut deltas: Vec<String> = Vec::new();
+        let full = client(url)
+            .chat_stream("p", &mut |d| deltas.push(d.to_string()))
+            .unwrap();
+        assert_eq!(full, "你好");
+        assert_eq!(deltas, vec!["你".to_string(), "好".to_string()]);
+    }
+
+    #[test]
+    fn test_chat_stream_skips_malformed_line() {
+        let body = "data: not-json\n\n\
+                    data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n\
+                    data: [DONE]\n\n";
+        let url = spawn_once("HTTP/1.1 200 OK", body);
+        let full = client(url).chat_stream("p", &mut |_| {}).unwrap();
+        assert_eq!(full, "好");
+    }
+
+    #[test]
+    fn test_chat_stream_http_error() {
+        let url = spawn_once("HTTP/1.1 500 Internal Server Error", "boom");
+        let error = client(url).chat_stream("p", &mut |_| {}).unwrap_err();
+        assert!(error.contains("LLM 返回 500"), "{error}");
+    }
+
+    #[test]
+    fn test_chat_stream_empty_body_is_error() {
+        let url = spawn_once("HTTP/1.1 200 OK", "");
+        assert!(client(url).chat_stream("p", &mut |_| {}).unwrap_err().contains("为空"));
+    }
+
+    #[test]
+    fn test_chat_stream_connection_refused() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let error = client(format!("http://{addr}"))
+            .chat_stream("p", &mut |_| {})
+            .unwrap_err();
+        assert!(error.contains("LLM 请求失败"), "{error}");
     }
 }

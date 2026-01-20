@@ -70,3 +70,15 @@ export interface ChunkInfo {
     label: string;
     text: string;
 }
+
+export interface SearchHit {
+    chunk_id: number;
+    document_id: string;
+    document_title: string;
+    chunk_label: string;
+    chunk_index: number;
+    snippet: string;
+    tags: string[];
+    created_at: string;
+    relevance: number;
+}

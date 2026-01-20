@@ -33,6 +33,7 @@ pub fn ensure_db(vault: &Path) -> Result<(), String> {
     let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
     crate::settings::ensure_table(&conn)?;
     crate::documents::ensure_table(&conn)?;
+    crate::qa::ensure_table(&conn)?;
     Ok(())
 }
 

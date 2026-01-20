@@ -10,6 +10,8 @@ pub const TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS settings (
 
 pub const PROMPT_DOCS_COMPILE: &str = "docs_compile";
 const DEFAULT_PROMPT_DOCS_COMPILE: &str = include_str!("../prompts/docs_compile.txt");
+pub const PROMPT_DOCS_ANSWER: &str = "docs_answer";
+const DEFAULT_PROMPT_DOCS_ANSWER: &str = include_str!("../prompts/docs_answer.txt");
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct SettingEntry {
@@ -26,6 +28,7 @@ pub fn ensure_table(conn: &Connection) -> Result<(), String> {
 pub fn default_prompt(name: &str) -> Option<&'static str> {
     match name {
         PROMPT_DOCS_COMPILE => Some(DEFAULT_PROMPT_DOCS_COMPILE),
+        PROMPT_DOCS_ANSWER => Some(DEFAULT_PROMPT_DOCS_ANSWER),
         _ => None,
     }
 }
@@ -143,6 +146,7 @@ mod tests {
     #[test]
     fn test_default_prompt_whitelist() {
         assert!(default_prompt("docs_compile").is_some());
+        assert!(default_prompt("docs_answer").is_some());
         assert!(default_prompt("unknown").is_none());
     }
 

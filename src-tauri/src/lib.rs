@@ -8,6 +8,8 @@ mod indexing;
 mod llm;
 mod logging;
 mod profiles;
+mod qa;
+mod search;
 mod settings;
 
 use std::path::{Path, PathBuf};
@@ -81,6 +83,107 @@ fn get_default_prompt(name: String) -> Result<String, String> {
     settings::default_prompt(&name)
         .map(str::to_string)
         .ok_or_else(|| format!("未知提示词: {name}"))
+}
+
+/// 问答事件的 Tauri 实现：转发到前端监听（payload serde_json::Value）。
+struct TauriQaEvents {
+    app: tauri::AppHandle,
+}
+
+impl TauriQaEvents {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        use tauri::Emitter;
+        if let Err(e) = self.app.emit(event, payload) {
+            logging::log("ERROR", &format!("qa 事件发送失败 {event}: {e}"));
+        }
+    }
+}
+
+impl qa::QaEvents for TauriQaEvents {
+    fn start(&self, conversation_id: &str) {
+        self.emit("qa-start", serde_json::json!({ "conversation_id": conversation_id }));
+    }
+
+    fn delta(&self, conversation_id: &str, text: &str) {
+        self.emit(
+            "qa-delta",
+            serde_json::json!({ "conversation_id": conversation_id, "text": text }),
+        );
+    }
+
+    fn done(&self, conversation_id: &str, sources: &[qa::SourceRef], message_id: i64) {
+        self.emit(
+            "qa-done",
+            serde_json::json!({ "conversation_id": conversation_id, "sources": sources, "message_id": message_id }),
+        );
+    }
+
+    fn error(&self, conversation_id: &str, message: &str) {
+        self.emit(
+            "qa-error",
+            serde_json::json!({ "conversation_id": conversation_id, "message": message }),
+        );
+    }
+}
+
+/// 提问：检索 top-5 组装上下文 → LLM 流式回答（qa-delta 事件推送）→ 落库。
+#[tauri::command]
+async fn qa_ask(
+    app: tauri::AppHandle,
+    question: String,
+    conversation_id: Option<String>,
+) -> Result<qa::AskOutcome, String> {
+    let vault = current_vault()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let client = compile::client_from_settings(&vault)?;
+        let model_name = settings::get(&vault, "embedding_model")?
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| embedding::SUPPORTED_MODEL.to_string());
+        // 模型加载失败不报错：检索降级仅 FTS
+        let model = embedding::default_embedding_model(&model_name).ok();
+        let events = TauriQaEvents { app };
+        qa::qa_ask_service(
+            &vault,
+            &events,
+            &question,
+            conversation_id.as_deref(),
+            &client,
+            model.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?;
+    log_command_result("qa_ask", &result);
+    result
+}
+
+#[tauri::command]
+fn list_conversations() -> Result<Vec<qa::ConversationSummary>, String> {
+    qa::list_conversations(Path::new(&current_vault()?))
+}
+
+#[tauri::command]
+fn list_messages(conversation_id: String) -> Result<Vec<qa::Message>, String> {
+    qa::list_messages(Path::new(&current_vault()?), &conversation_id)
+}
+
+/// 混合检索（向量 KNN + FTS trigram RRF 融合）；向量腿失败降级仅 FTS。
+#[tauri::command]
+async fn search_documents(query: String, limit: Option<u32>) -> Result<Vec<search::SearchHit>, String> {
+    let limit = limit.unwrap_or(10).clamp(1, 50) as usize;
+    let vault = current_vault()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let model_name = settings::get(&vault, "embedding_model")?
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| embedding::SUPPORTED_MODEL.to_string());
+        // 模型加载失败不报错：降级仅 FTS
+        let model = embedding::default_embedding_model(&model_name).ok();
+        search::search_documents(&vault, &query, limit, model.as_deref())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {e}"))?;
+    log_command_result("search_documents", &result);
+    result
 }
 
 /// process_documents 的汇总结果。
@@ -177,6 +280,10 @@ pub fn run() {
             list_documents,
             get_document,
             list_chunks,
+            search_documents,
+            qa_ask,
+            list_conversations,
+            list_messages,
             get_settings,
             set_setting,
             get_default_prompt,

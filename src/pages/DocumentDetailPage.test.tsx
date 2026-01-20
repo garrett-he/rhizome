@@ -53,9 +53,9 @@ function chunk(overrides: Partial<ChunkInfo> = {}): ChunkInfo {
     return { id: 1, label: "服务拆分", text: "第一段内容。", ...overrides };
 }
 
-function renderPage() {
+function renderPage(initialEntry = "/documents/doc1") {
     return render(
-        <MemoryRouter initialEntries={["/documents/doc1"]}>
+        <MemoryRouter initialEntries={[initialEntry]}>
             <Routes>
                 <Route path="/documents/:id" element={<DocumentDetailPage />} />
             </Routes>
@@ -228,5 +228,27 @@ describe("DocumentDetailPage", () => {
         renderPage();
 
         expect(await screen.findByText(/尚未索引，点击「重新索引」生成切片/)).toBeTruthy();
+    });
+
+    it("selects and scrolls to chunk from ?chunk= param", async () => {
+        mockHappyPath();
+        const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+        renderPage("/documents/doc1?chunk=2");
+
+        // 对应切片被初始选中并滚动定位
+        await waitFor(() => {
+            expect(scrollSpy).toHaveBeenCalled();
+        });
+        const target = screen.getByText("第二段内容。").closest("section");
+        expect(target?.className).toContain("bg-accent");
+    });
+
+    it("ignores unknown ?chunk= param", async () => {
+        mockHappyPath();
+        renderPage("/documents/doc1?chunk=999");
+
+        await screen.findByText("01 · 服务拆分");
+        const target = screen.getByText("第一段内容。").closest("section");
+        expect(target?.className).not.toContain("bg-accent");
     });
 });
