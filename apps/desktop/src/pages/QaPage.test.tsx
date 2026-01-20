@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
@@ -30,6 +30,12 @@ function emit(event: string, payload: Record<string, unknown>) {
 const CONVERSATION: ConversationSummary = {
     id: "conv1",
     title: "服务拆分实践",
+    updated_at: new Date().toISOString(),
+};
+
+const OTHER_CONVERSATION: ConversationSummary = {
+    id: "conv2",
+    title: "会议纪要",
     updated_at: new Date().toISOString(),
 };
 
@@ -222,5 +228,78 @@ describe("QaPage", () => {
 
         expect(await screen.findByText("输入问题，从知识库中寻找答案")).toBeTruthy();
         expect(screen.queryByText("之前的问题")).toBeNull();
+    });
+
+    it("re-enables input after switching conversation during streaming, without polluting entries", async () => {
+        const user = userEvent.setup();
+        // qa_ask 挂起不 resolve，模拟 LLM 长时间流式
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "qa_ask") {
+                emit("qa-start", { conversation_id: "conv1" });
+                emit("qa-delta", { conversation_id: "conv1", text: "流式中的回答" });
+                await new Promise(() => {});
+            }
+            if (cmd === "list_conversations") {
+                return [CONVERSATION, OTHER_CONVERSATION];
+            }
+            if (cmd === "list_messages") {
+                return [
+                    { id: 1, role: "user", content: "之前的问题", sources: [], created_at: "2026-10-22T01:00:00Z" },
+                ];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("输入问题，从知识库中寻找答案");
+
+        await user.type(screen.getByLabelText("问题"), "问题");
+        await user.click(screen.getByRole("button", { name: "发送" }));
+        expect(screen.getByLabelText("问题")).toBeDisabled();
+
+        // 流式期间切换到另一个历史会话
+        await user.click(screen.getByText("会议纪要"));
+        await screen.findByText("之前的问题");
+        expect(screen.getByLabelText("问题")).toBeEnabled();
+
+        // 旧会话的 qa-done 到达：因会话 id 不匹配被过滤，不污染当前会话的 entries
+        act(() => {
+            emit("qa-done", { conversation_id: "conv1", message_id: 7, sources: [] });
+        });
+        expect(screen.queryByText(/流式中的回答/)).toBeNull();
+        expect(screen.getByText("之前的问题")).toBeTruthy();
+        // 输入保持可用
+        expect(screen.getByLabelText("问题")).toBeEnabled();
+    });
+
+    it("syncs conversation id when qa_ask resolves before events in a new conversation", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "qa_ask") {
+                // 不推送任何事件直接 resolve：命令 resolve 时仍在流式等待、会话 id 仍为 null
+                return { conversation_id: "conv-new", sources: [] };
+            }
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            if (cmd === "list_messages") {
+                return [];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("输入问题，从知识库中寻找答案");
+
+        await user.type(screen.getByLabelText("问题"), "问题");
+        await user.click(screen.getByRole("button", { name: "发送" }));
+        // flush 微任务：让 qa_ask 的 resolve 先完成会话 id 同步
+        await act(async () => {});
+
+        // 会话 id 已同步为 conv-new：随后到达的 qa-done 能匹配并复位输入
+        act(() => {
+            emit("qa-delta", { conversation_id: "conv-new", text: "回答内容" });
+            emit("qa-done", { conversation_id: "conv-new", message_id: 9, sources: [] });
+        });
+        expect(await screen.findByText("回答内容")).toBeTruthy();
+        expect(screen.getByLabelText("问题")).toBeEnabled();
     });
 });

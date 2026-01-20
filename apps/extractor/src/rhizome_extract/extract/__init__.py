@@ -7,7 +7,9 @@ string and only ever writes auxiliary assets into a temporary
 directory that is cleaned up on exit.
 """
 
+import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,13 +20,14 @@ from rhizome_extract.extract.docx import convert_docx
 from rhizome_extract.extract.excel import convert_excel
 from rhizome_extract.extract.formats.markdown import html_to_markdown
 from rhizome_extract.extract.formats.srt import DEFAULT_LINE_WIDTH, DEFAULT_MAX_LINES, format_srt
-from rhizome_extract.extract.media import is_supported
+from rhizome_extract.extract.media.audio import is_audio
 from rhizome_extract.extract.media.docx import is_docx
 from rhizome_extract.extract.media.excel import is_excel
 from rhizome_extract.extract.media.html import copy_local_images, is_html
 from rhizome_extract.extract.media.image import is_image
 from rhizome_extract.extract.media.pdf import is_pdf
 from rhizome_extract.extract.media.pptx import is_pptx
+from rhizome_extract.extract.media.video import is_video
 from rhizome_extract.extract.ocr import recognize
 from rhizome_extract.extract.pdf import convert_pdf
 from rhizome_extract.extract.pptx import convert_pptx
@@ -77,28 +80,58 @@ def _render_txt(source: Path, options: ExtractOptions) -> str:
     return convert_han(recognize(source), options.han)
 
 
+def _decode_html(source: Path) -> str:
+    """Read HTML bytes with encoding fallbacks: BOM/UTF-8, declared
+    charset, GB18030, and finally lossy UTF-8."""
+    raw = source.read_bytes()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    match = re.search(rb"""charset\s*=\s*["']?([\w.-]+)""", raw[:4096], re.IGNORECASE)
+    if match:
+        try:
+            return raw.decode(match.group(1).decode("ascii"))
+        except (UnicodeDecodeError, LookupError):
+            pass
+    try:
+        return raw.decode("gb18030")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", errors="replace")
+
+
 def _render_html(source: Path, output: Path) -> str:
     """Render one HTML file as Markdown, copying local images next to the output."""
-    html = source.read_text(encoding="utf-8-sig")
+    html = _decode_html(source)
     html = copy_local_images(html, source, assets_dir_for(output))
     return html_to_markdown(html).strip("\n")
 
 
 def _extract_one(source: Path, output: Path, options: ExtractOptions) -> str:
-    """Extract text from one supported file, dispatching by media type."""
-    if is_docx(source):
-        return convert_docx(source, output)
-    if is_pptx(source):
-        return convert_pptx(source, output)
-    if is_pdf(source):
-        return convert_pdf(source, output)
-    if is_html(source):
-        return _render_html(source, output)
-    if is_excel(source):
-        return convert_excel(source, output)
-    if is_image(source):
-        return _render_txt(source, options)
-    return _render_srt(source, options)
+    """Extract text from one supported file via the dispatch registry."""
+    for claims, render in _REGISTRY:
+        if claims(source):
+            return render(source, output, options)
+    raise ExtractUnsupportedError(f"unsupported file type: {source}")
+
+
+def is_supported(path: Path) -> bool:
+    """Return True if any registered media type claims the path's extension."""
+    return any(claims(path) for claims, _ in _REGISTRY)
+
+
+# 单一派发表：媒体类型判定与渲染器在这里配对，is_supported 与
+# _extract_one 都由它派生，新增媒体类型只需追加一个条目。
+_REGISTRY: list[tuple[Callable[[Path], bool], Callable[[Path, Path, ExtractOptions], str]]] = [
+    (is_docx, lambda source, output, _options: convert_docx(source, output)),
+    (is_pptx, lambda source, output, _options: convert_pptx(source, output)),
+    (is_pdf, lambda source, output, _options: convert_pdf(source, output)),
+    (is_html, lambda source, output, _options: _render_html(source, output)),
+    (is_excel, lambda source, output, _options: convert_excel(source, output)),
+    (is_image, lambda source, _output, options: _render_txt(source, options)),
+    (is_audio, lambda source, _output, options: _render_srt(source, options)),
+    (is_video, lambda source, _output, options: _render_srt(source, options)),
+]
 
 
 def extract_text(path: Path, options: ExtractOptions | None = None) -> str:

@@ -150,3 +150,48 @@ def test_is_supported_covers_all_media_types(tmp_path: Path) -> None:
     # 大小写不敏感
     assert is_supported(tmp_path / "A.DOCX")
     assert not is_supported(tmp_path / "a.xyz")
+
+
+def test_html_local_image_boundary(tmp_path: Path) -> None:
+    """Regression: img src 绝对路径或越界相对路径不得被复制进 assets。"""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("机密内容", encoding="utf-8")
+    sibling = tmp_path.parent / "outside_secret.txt"
+    sibling.write_text("外部机密", encoding="utf-8")
+    page = tmp_path / "a.html"
+    page.write_text(
+        f'<html><body><img src="{secret.as_posix()}"><img src="../outside_secret.txt"></body></html>',
+        encoding="utf-8",
+    )
+
+    text = extract_text(page)
+
+    assert "机密内容" not in text
+    assert "外部机密" not in text
+
+
+def test_html_gbk_encoding_fallback(tmp_path: Path) -> None:
+    """Regression: GBK 编码 HTML 不再因 UnicodeDecodeError 失败。"""
+    page = tmp_path / "gbk.html"
+    page.write_bytes("<html><body><h1>中文标题</h1><p>正文内容。</p></body></html>".encode("gbk"))
+
+    text = extract_text(page)
+
+    assert "# 中文标题" in text
+    assert "正文内容" in text
+
+
+def test_docx_zip_bomb_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: 解压总量超限的 docx 包报 ZipBombError 而非 OOM。"""
+    import zipfile
+
+    from rhizome_extract.extract import zipguard
+
+    monkeypatch.setattr(zipguard, "MAX_TOTAL_UNCOMPRESSED", 8)
+    docx = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(docx, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", b"<w:document/>" * 10)
+
+    with pytest.raises(zipguard.ZipBombError):
+        extract_text(docx)

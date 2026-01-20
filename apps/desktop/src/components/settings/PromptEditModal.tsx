@@ -1,6 +1,8 @@
 ﻿import { Button } from "@/components/ui/button";
 
 interface PromptEditModalProps {
+    /** settings KV 名（不含 prompt: 前缀），用于标题与 aria-label */
+    name: string;
     draft: string;
     saving: boolean;
     onChange: (value: string) => void;
@@ -8,7 +10,7 @@ interface PromptEditModalProps {
     onSave: () => void;
 }
 
-export function PromptEditModal({ draft, saving, onChange, onClose, onSave }: PromptEditModalProps) {
+export function PromptEditModal({ name, draft, saving, onChange, onClose, onSave }: PromptEditModalProps) {
     return (
         <>
             <button
@@ -19,11 +21,11 @@ export function PromptEditModal({ draft, saving, onChange, onClose, onSave }: Pr
             />
             <div
                 role="dialog"
-                aria-label="编辑提示词 docs_compile"
+                aria-label={`编辑提示词 ${name}`}
                 className="fixed left-1/2 top-1/2 z-50 flex max-h-[80vh] w-[720px] max-w-full -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-neutral-200 bg-neutral-50 shadow-lg"
             >
                 <div className="px-6 py-4">
-                    <h3 className="text-base font-medium text-neutral-950">编辑提示词 docs_compile</h3>
+                    <h3 className="text-base font-medium text-neutral-950">编辑提示词 {name}</h3>
                 </div>
                 <textarea
                     aria-label="提示词内容"

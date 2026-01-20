@@ -54,22 +54,35 @@ export function useQa() {
         }
     }, []);
 
-    const openConversation = useCallback(async (id: string) => {
-        setConversationId(id);
-        try {
-            const messages = await listMessages(id);
-            setEntries(messages.map((message) => ({ kind: "message" as const, message })));
-            setError(null);
-        } catch (err) {
-            setError(toMessage(err));
+    // 流式中途切换会话时立即解除输入锁：旧会话的后续事件由 conversation_id 过滤，不会污染新会话
+    const resetStreaming = useCallback(() => {
+        if (streamingRef.current) {
+            streamingRef.current = false;
+            setAsking(false);
         }
     }, []);
 
+    const openConversation = useCallback(
+        async (id: string) => {
+            resetStreaming();
+            setConversationId(id);
+            try {
+                const messages = await listMessages(id);
+                setEntries(messages.map((message) => ({ kind: "message" as const, message })));
+                setError(null);
+            } catch (err) {
+                setError(toMessage(err));
+            }
+        },
+        [resetStreaming],
+    );
+
     const newConversation = useCallback(() => {
+        resetStreaming();
         setConversationId(null);
         setEntries([]);
         setError(null);
-    }, []);
+    }, [resetStreaming]);
 
     useEffect(() => {
         void refreshConversations().finally(() => setLoading(false));
@@ -179,8 +192,9 @@ export function useQa() {
             ]);
             try {
                 const outcome = await askQuestion(trimmed, conversationIdRef.current ?? undefined);
-                // 命令 resolve 晚于 qa-done：同步会话 id（新建会话场景）
-                if (conversationIdRef.current === null) {
+                // 命令 resolve 晚于 qa-done：同步会话 id（新建会话场景）。
+                // 仅在流式仍活跃且用户未切换会话时同步，避免切换后被旧会话 id 拉回。
+                if (streamingRef.current && conversationIdRef.current === null) {
                     conversationIdRef.current = outcome.conversation_id;
                     setConversationId(outcome.conversation_id);
                 }

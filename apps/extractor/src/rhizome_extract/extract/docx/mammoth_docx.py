@@ -19,6 +19,7 @@ from mammoth import docx as mammoth_docx
 
 from rhizome_extract.extract.assets import assets_dir_for
 from rhizome_extract.extract.formats.markdown import html_to_markdown
+from rhizome_extract.extract.zipguard import guard
 
 _CONTENT_TYPE_EXTENSIONS = {
     "image/bmp": "bmp",
@@ -92,6 +93,7 @@ def _extract_embeddings(source: Path, assets_dir: Path) -> list[str]:
     """Extract OLE embedded objects from the docx package into assets_dir."""
     names: list[str] = []
     with zipfile.ZipFile(source) as archive:
+        guard(archive, source)
         for info in archive.infolist():
             basename = Path(info.filename).name
             if not info.filename.startswith("word/embeddings/") or not basename:
@@ -184,6 +186,7 @@ def _unwrap_textboxes(xml: str) -> str:
 def _open_for_conversion(source: Path) -> BinaryIO:
     """Open a docx package with textbox content hoisted for mammoth."""
     with zipfile.ZipFile(source) as archive:
+        guard(archive, source)
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as copy:
             for info in archive.infolist():

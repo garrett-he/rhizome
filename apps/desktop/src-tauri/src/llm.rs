@@ -32,7 +32,13 @@ impl OpenAiClient {
     pub fn new(config: LlmConfig) -> Self {
         Self {
             config,
-            http: reqwest::blocking::Client::new(),
+            // 连接超时 + 总超时：服务挂起时命令最终会返回而不是永久阻塞。
+            // 总超时覆盖流式响应全程，取宽值（QA 流式极少超过 10 分钟）。
+            http: reqwest::blocking::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(600))
+                .build()
+                .unwrap_or_else(|_| reqwest::blocking::Client::new()),
         }
     }
 }

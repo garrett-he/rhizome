@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::compile;
@@ -50,7 +49,7 @@ fn validate_step(step: &str) -> Result<(), String> {
 /// 选出目标文档：ids 非空按给定顺序；为空按步骤选择
 /// （compile=全部 raw、index=全部 compiled、all=raw+compiled，均按导入时间升序）。
 fn collect_targets(vault: &Path, ids: &[String], step: &str) -> Result<Vec<Target>, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     crate::documents::ensure_table(&conn)?;
     if !ids.is_empty() {
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
@@ -245,6 +244,7 @@ mod tests {
 
     use super::*;
     use crate::db::ensure_db;
+    use rusqlite::Connection;
     use tempfile::TempDir;
 
     fn setup() -> TempDir {

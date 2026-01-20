@@ -52,28 +52,28 @@ pub fn resolve_prompt(vault: &Path) -> Result<String, String> {
 /// 编译文档：空 id 列表选择全部 raw；显式 id 不存在则产出错误结果（不中断批次）。
 /// `force` 为 true 时，显式指定的已编译文档先重置为 raw 并清空编译/索引产物与
 /// 旧切片（重新编译语义），随后正常重编译。
-/// 返回前一次性提交所有写库（对齐旧版单 session 末尾 commit）。
+/// LLM 调用在事务外进行（避免长时间持有 SQLite 写锁阻塞其它写库操作）；
+/// 每个文档独立事务提交，单文档失败不影响已完成文档。
 pub fn compile_documents(
     vault: &Path,
     document_ids: &[String],
     client: &dyn LlmClient,
     force: bool,
 ) -> Result<Vec<CompileOutcome>, String> {
-    let mut conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let mut conn = crate::db::open_conn(vault)?;
     documents::ensure_table(&conn)?;
     let prompt_template = resolve_prompt(vault)?;
 
     let mut outcomes: Vec<CompileOutcome> = Vec::new();
-    let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
 
     if document_ids.is_empty() {
-        let targets = select_by_status(&tx, "raw")?;
+        let targets = select_by_status(&conn, "raw")?;
         for (id, content) in targets {
-            outcomes.push(compile_one(&tx, client, &prompt_template, &id, &content));
+            outcomes.push(compile_one(&mut conn, client, &prompt_template, &id, &content));
         }
     } else {
         for requested in document_ids {
-            let target: Option<(String, String, String, String)> = tx
+            let target: Option<(String, String, String, String)> = conn
                 .query_row(
                     "SELECT id, content, file_name, status FROM documents WHERE id = ?1",
                     [requested],
@@ -84,9 +84,9 @@ pub fn compile_documents(
             match target {
                 Some((id, content, _file_name, status)) => {
                     if force && status != "raw" {
-                        reset_for_recompile(&tx, &id)?;
+                        reset_for_recompile(&mut conn, &id)?;
                     }
-                    outcomes.push(compile_one(&tx, client, &prompt_template, &id, &content));
+                    outcomes.push(compile_one(&mut conn, client, &prompt_template, &id, &content));
                 }
                 None => outcomes.push(CompileOutcome {
                     document_id: requested.clone(),
@@ -99,13 +99,13 @@ pub fn compile_documents(
         }
     }
 
-    tx.commit().map_err(|e| format!("提交失败: {e}"))?;
     Ok(outcomes)
 }
 
-/// force 重编译前置：重置状态并清空编译/索引产物（同事务，后续 compile_one 重编译）。
-fn reset_for_recompile(tx: &rusqlite::Transaction, id: &str) -> Result<(), String> {
-    crate::index_db::delete_document_chunks(tx, id)?;
+/// force 重编译前置：重置状态并清空编译/索引产物（独立事务提交）。
+fn reset_for_recompile(conn: &mut Connection, id: &str) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+    crate::index_db::delete_document_chunks(&tx, id)?;
     tx.execute(
         "UPDATE documents
          SET status = 'raw', content_compiled = NULL, metadata_compiled = NULL, compiled_at = NULL,
@@ -115,12 +115,13 @@ fn reset_for_recompile(tx: &rusqlite::Transaction, id: &str) -> Result<(), Strin
         params![id, now_rfc3339()],
     )
     .map_err(|e| format!("重置文档状态失败: {e}"))?;
+    tx.commit().map_err(|e| format!("提交失败: {e}"))?;
     crate::logging::log("INFO", &format!("文档重编译重置 {id}（清空旧切片与编译产物）"));
     Ok(())
 }
 
-fn select_by_status(tx: &rusqlite::Transaction, status: &str) -> Result<Vec<(String, String)>, String> {
-    let mut stmt = tx
+fn select_by_status(conn: &Connection, status: &str) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
         .prepare("SELECT id, content FROM documents WHERE status = ?1 ORDER BY created_at")
         .map_err(|e| format!("查询失败: {e}"))?;
     let rows = stmt
@@ -130,21 +131,35 @@ fn select_by_status(tx: &rusqlite::Transaction, status: &str) -> Result<Vec<(Str
         .map_err(|e| format!("读取结果失败: {e}"))
 }
 
-/// 编译单个文档：成功更新编译稿与状态，失败写 last_error（状态不前进）。
+fn db_error_outcome(id: &str, message: String) -> CompileOutcome {
+    CompileOutcome {
+        document_id: id.to_string(),
+        title: None,
+        tags: None,
+        ok: false,
+        error: Some(message),
+    }
+}
+
+/// 编译单个文档：LLM 调用在事务外；成功更新编译稿与状态，失败写 last_error
+/// （状态不前进）。每个文档一个事务，独立提交。
 fn compile_one(
-    tx: &rusqlite::Transaction,
+    conn: &mut Connection,
     client: &dyn LlmClient,
     template: &str,
     id: &str,
     content: &str,
 ) -> CompileOutcome {
-    let current: Option<String> = tx
+    let current: Option<String> = match conn
         .query_row("SELECT status FROM documents WHERE id = ?1", [id], |row| row.get(0))
         .optional()
-        .unwrap_or(None);
+    {
+        Ok(status) => status,
+        Err(e) => return db_error_outcome(id, format!("查询失败: {e}")),
+    };
     if current.as_deref().is_some_and(|status| status != "raw") {
         // 已编译：跳过并返回既有元数据标题（对齐旧版 skip 行为）
-        let (_, title, _tags) = compiled_metadata(tx, id);
+        let (_, title, _tags) = compiled_metadata(conn, id);
         return CompileOutcome {
             document_id: id.to_string(),
             title,
@@ -154,20 +169,50 @@ fn compile_one(
         };
     }
 
+    // LLM 调用在事务外进行，避免长时间持有 SQLite 写锁
     let prompt = template.replace("{content}", content);
     let parsed = match client.chat(&prompt).and_then(|response| parse_response(&response)) {
         Ok((Value::Object(metadata), body)) => Ok((metadata, body)),
         Ok(_) => Err("LLM 响应元数据格式异常".to_string()),
         Err(error) => Err(error),
     };
+
+    let tx = match conn.transaction().map_err(|e| format!("开启事务失败: {e}")) {
+        Ok(tx) => tx,
+        Err(e) => return db_error_outcome(id, e),
+    };
+    // 事务内复查状态：并发编译同一文档时后者跳过（此处无写入，事务随 return 回滚）
+    let current: Option<String> = match tx
+        .query_row("SELECT status FROM documents WHERE id = ?1", [id], |row| row.get(0))
+        .optional()
+    {
+        Ok(status) => status,
+        Err(e) => return db_error_outcome(id, format!("查询失败: {e}")),
+    };
+    if current.as_deref().is_some_and(|status| status != "raw") {
+        let (_, title, _tags) = compiled_metadata(&tx, id);
+        return CompileOutcome {
+            document_id: id.to_string(),
+            title,
+            tags: None,
+            ok: true,
+            error: None,
+        };
+    }
+
     match parsed {
         Err(error) => {
             let message = format!("compile: {error}");
             crate::logging::log("ERROR", &format!("文档编译失败 {id}: {message}"));
-            let _ = tx.execute(
+            if let Err(e) = tx.execute(
                 "UPDATE documents SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
                 params![id, message, now_rfc3339()],
-            );
+            ) {
+                return db_error_outcome(id, format!("写入数据库失败: {e}"));
+            }
+            if let Err(e) = tx.commit() {
+                return db_error_outcome(id, format!("提交失败: {e}"));
+            }
             CompileOutcome {
                 document_id: id.to_string(),
                 title: None,
@@ -177,10 +222,13 @@ fn compile_one(
             }
         }
         Ok((mut metadata, body)) => {
-            let file_name: Option<String> = tx
+            let file_name: Option<String> = match tx
                 .query_row("SELECT file_name FROM documents WHERE id = ?1", [id], |row| row.get(0))
                 .optional()
-                .unwrap_or(None);
+            {
+                Ok(file_name) => file_name,
+                Err(e) => return db_error_outcome(id, format!("查询失败: {e}")),
+            };
             // title 回退链：front matter 标题 → file_name（对齐旧版 setdefault）
             if metadata.get("title").and_then(Value::as_str).map(str::is_empty) != Some(false) {
                 if let Some(fallback) = file_name {
@@ -207,13 +255,10 @@ fn compile_one(
                  WHERE id = ?1",
                 params![id, serialized, body, now, client.model()],
             ) {
-                return CompileOutcome {
-                    document_id: id.to_string(),
-                    title,
-                    tags,
-                    ok: false,
-                    error: Some(format!("写入数据库失败: {error}")),
-                };
+                return db_error_outcome(id, format!("写入数据库失败: {error}"));
+            }
+            if let Err(error) = tx.commit() {
+                return db_error_outcome(id, format!("提交失败: {error}"));
             }
             CompileOutcome {
                 document_id: id.to_string(),
@@ -227,13 +272,17 @@ fn compile_one(
 }
 
 /// 读取已编译文档的元数据标题（无元数据或解析失败为 None）。
-fn compiled_metadata(tx: &rusqlite::Transaction, id: &str) -> (Option<Value>, Option<String>, Option<Vec<String>>) {
-    let raw: Option<String> = tx
-        .query_row("SELECT metadata_compiled FROM documents WHERE id = ?1", [id], |row| {
-            row.get(0)
-        })
-        .optional()
-        .unwrap_or(None);
+fn compiled_metadata(
+    conn: &Connection,
+    id: &str,
+) -> (Option<Value>, Option<String>, Option<Vec<String>>) {
+    let Ok(raw) = conn.query_row(
+        "SELECT metadata_compiled FROM documents WHERE id = ?1",
+        [id],
+        |row| row.get::<_, Option<String>>(0),
+    ) else {
+        return (None, None, None);
+    };
     let Some(raw) = raw else {
         return (None, None, None);
     };

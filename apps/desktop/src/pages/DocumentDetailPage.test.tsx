@@ -5,14 +5,17 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { confirmAction } from "@/lib/dialog";
 import type { ChunkInfo, DocumentDetail } from "@/types/document";
 import { DocumentDetailPage } from "./DocumentDetailPage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn() }));
+vi.mock("@/lib/dialog", () => ({ confirmAction: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke) as unknown as Mock;
 const revealMock = vi.mocked(revealItemInDir) as unknown as Mock;
+const confirmMock = vi.mocked(confirmAction);
 
 const COMPILED =
     "# 微服务架构实践\n\n<!-- chunk: 服务拆分 -->\n第一段内容。\n\n<!-- chunk: 数据一致性 -->\n第二段内容。";
@@ -98,7 +101,7 @@ beforeEach(() => {
     revealMock.mockResolvedValue(undefined);
     // jsdom 未实现平滑滚动
     Element.prototype.scrollIntoView = vi.fn();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmMock.mockResolvedValue(true);
 });
 
 describe("DocumentDetailPage", () => {
@@ -182,12 +185,12 @@ describe("DocumentDetailPage", () => {
         await waitFor(() => {
             expect(invokeMock).toHaveBeenCalledWith("compile_documents", { documentIds: ["doc1"], force: true });
         });
-        expect(window.confirm).toHaveBeenCalled();
+        expect(confirmMock).toHaveBeenCalled();
     });
 
     it("does not recompile when confirmation is dismissed", async () => {
         mockHappyPath();
-        vi.spyOn(window, "confirm").mockReturnValue(false);
+        confirmMock.mockResolvedValue(false);
         const user = userEvent.setup();
         renderPage();
         await screen.findByText("01 · 服务拆分");

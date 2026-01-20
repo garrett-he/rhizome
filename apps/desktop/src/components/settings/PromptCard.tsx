@@ -72,6 +72,7 @@ export function PromptCard({ name, title, description, value, onSave, onReset }:
             </div>
             {editing && (
                 <PromptEditModal
+                    name={name}
                     draft={draft}
                     saving={saving}
                     onChange={setDraft}

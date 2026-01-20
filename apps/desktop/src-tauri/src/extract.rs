@@ -47,7 +47,9 @@ pub fn extractor_command(vault: &Path) -> Result<Command, String> {
         .arg("run")
         .arg("--project")
         .arg(project)
-        .arg("rhizome-extract");
+        .arg("rhizome-extract")
+        // 与 custom_command 一致：防止以 "-" 开头的文件名被当作选项解析
+        .arg("--");
     Ok(command)
 }
 

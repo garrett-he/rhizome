@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -147,10 +148,25 @@ fn now_rfc3339() -> String {
     OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_default()
 }
 
-fn sha1_hex(bytes: &[u8]) -> String {
+/// 流式计算文件 sha1 与大小（分块读取，避免大文件整体载入内存）。
+fn sha1_file(path: &Path) -> Result<(String, u64), String> {
+    let display = path.display();
+    let file = fs::File::open(path).map_err(|e| format!("读取文件失败: {display}: {e}"))?;
+    let size = file
+        .metadata()
+        .map_err(|e| format!("读取文件失败: {display}: {e}"))?
+        .len();
+    let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
     let mut hasher = Sha1::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(|e| format!("读取文件失败: {display}: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok((format!("{:x}", hasher.finalize()), size))
 }
 
 /// 按扩展名判型（魔数探测留待后续按需补充）。md/txt/srt 为纯文本直读，
@@ -215,7 +231,8 @@ pub trait ExtractsText {
 
 /// 添加单个文档（对齐 deprecated add 流程）：sha1 去重跳过、纯文本直读 /
 /// 其余类型经 extractor 抽取为文本、复制原文到 blobs 分片目录、插入
-/// status='raw' 行；DB 插入失败回滚删除 blob。
+/// status='raw' 行。去重与插入经 INSERT OR IGNORE 原子判定（并发导入同一
+/// 文件时后到方安全跳过、不删除对方 blob）；自身插入失败时回滚删除 blob。
 fn add(
     vault: &Path,
     path: &str,
@@ -228,10 +245,9 @@ fn add(
         return Err(format!("不支持的文件类型: {trimmed}"));
     };
 
-    let bytes = fs::read(source).map_err(|e| format!("读取文件失败: {trimmed}: {e}"))?;
-    let digest = sha1_hex(&bytes);
+    let (digest, size) = sha1_file(source)?;
 
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     let existing: Option<String> = conn
         .query_row("SELECT id FROM documents WHERE sha1 = ?1", [&digest], |row| row.get(0))
         .optional()
@@ -241,6 +257,7 @@ fn add(
     }
 
     let content = if is_plain_text(mime_type) {
+        let bytes = fs::read(source).map_err(|e| format!("读取文件失败: {trimmed}: {e}"))?;
         String::from_utf8_lossy(&bytes).into_owned()
     } else {
         let timeout = if mime_type.starts_with("audio/") || mime_type.starts_with("video/") {
@@ -250,7 +267,6 @@ fn add(
         };
         extractor.extract(vault, source, timeout)?
     };
-    let size = bytes.len() as u64;
     let file_name = source
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -265,13 +281,23 @@ fn add(
     let id = Uuid::new_v4().to_string().replace('-', "");
     let now = now_rfc3339();
     let result = conn.execute(
-        "INSERT INTO documents (id, file_name, mime_type, type, sha1, size, content, status, created_at, updated_at, category_id)
+        "INSERT OR IGNORE INTO documents (id, file_name, mime_type, type, sha1, size, content, status, created_at, updated_at, category_id)
          VALUES (?1, ?2, ?3, 'plaintext', ?4, ?5, ?6, 'raw', ?7, ?7, ?8)",
         rusqlite::params![id, file_name, mime_type, digest, size, content, now, category_id],
     );
-    if let Err(e) = result {
-        let _ = fs::remove_file(&blob);
-        return Err(format!("写入数据库失败: {e}"));
+    match result {
+        Err(e) => {
+            let _ = fs::remove_file(&blob);
+            return Err(format!("写入数据库失败: {e}"));
+        }
+        // 并发导入同一文件：另一方已插入。不删 blob（内容与本方一致，删了会让对方失去原文）
+        Ok(0) => {
+            let id: String = conn
+                .query_row("SELECT id FROM documents WHERE sha1 = ?1", [&digest], |row| row.get(0))
+                .map_err(|e| format!("查询失败: {e}"))?;
+            return Ok(AddOutcome::Skipped { id });
+        }
+        Ok(_) => {}
     }
     Ok(AddOutcome::Added { id })
 }
@@ -297,7 +323,7 @@ pub fn add_batch(vault: &Path, paths: &[String], category_id: Option<&str>, extr
 }
 
 pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     crate::categories::ensure_table(&conn)?;
     let mut stmt = conn
@@ -330,7 +356,7 @@ pub fn list(vault: &Path) -> Result<Vec<DocumentSummary>, String> {
 
 /// 读取单个文档详情；不存在返回 Err。
 pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     crate::categories::ensure_table(&conn)?;
     let detail = conn
@@ -378,7 +404,7 @@ pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
 
 /// 设置/更换/清除文档分类（category_id 为 None 时清除）；文档或分类不存在返回 Err。
 pub fn set_category(vault: &Path, document_id: &str, category_id: Option<&str>) -> Result<(), String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     crate::categories::ensure_table(&conn)?;
     if let Some(cid) = category_id {

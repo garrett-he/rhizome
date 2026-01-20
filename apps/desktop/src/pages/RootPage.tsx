@@ -13,7 +13,8 @@ export function RootPage() {
     }
     return (
         <AppShell vaultPath={profiles.current} vaults={profiles.vaults} onSwitchVault={(path) => void openVault(path)}>
-            <Outlet />
+            {/* key 强制子路由在切换知识库后重挂载，避免各页面沿用旧 vault 的数据 */}
+            <Outlet key={profiles.current} />
         </AppShell>
     );
 }

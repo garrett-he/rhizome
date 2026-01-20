@@ -31,11 +31,20 @@ def _is_local_reference(src: str) -> bool:
     return not _REMOTE_SRC_PATTERN.match(src)
 
 
-def _candidate_path(src: str, source: Path) -> Path:
-    """Resolve an img src against the HTML file's directory."""
+def _candidate_path(src: str, source: Path) -> Path | None:
+    """Resolve an img src against the HTML file's directory.
+
+    Returns None for absolute paths or paths escaping the HTML file's
+    directory: HTML is untrusted input, so only assets inside the source
+    tree may be copied.
+    """
     local = unquote(src.replace("\\", "/"))
     candidate = Path(local)
-    return candidate if candidate.is_absolute() else source.parent / candidate
+    resolved = (source.parent / candidate).resolve()
+    root = source.parent.resolve()
+    if resolved != root and not resolved.is_relative_to(root):
+        return None
+    return resolved
 
 
 def _unique_name(basename: str, taken: set[str]) -> str:
@@ -64,7 +73,8 @@ def copy_local_images(html: str, source: Path, assets_dir: Path) -> str:
 
     Relative paths are resolved against the HTML file's directory and
     Windows-style separators are accepted. Remote URLs and data URIs are
-    left untouched, as are references to files that do not exist. The
+    left untouched, as are references to files that do not exist or that
+    resolve outside the HTML file's directory. The
     copied files keep their basename, with whitespace replaced by
     underscores and a numeric suffix appended on basename conflicts.
     Returns the rewritten HTML.
@@ -76,7 +86,7 @@ def copy_local_images(html: str, source: Path, assets_dir: Path) -> str:
         if not isinstance(src, str) or not _is_local_reference(src):
             continue
         candidate = _candidate_path(src, source)
-        if not candidate.is_file():
+        if candidate is None or not candidate.is_file():
             continue
         assets_dir.mkdir(parents=True, exist_ok=True)
         name = _unique_name(candidate.name.replace(" ", "_"), taken)

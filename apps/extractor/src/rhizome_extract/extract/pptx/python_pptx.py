@@ -7,6 +7,7 @@ are extracted into an asset directory next to the output file and
 referenced with relative paths; speaker notes are kept as blockquotes.
 """
 
+import zipfile
 from pathlib import Path
 
 from pptx import Presentation
@@ -20,6 +21,7 @@ from pptx.slide import Slide
 from pptx.text.text import TextFrame, _Paragraph
 
 from rhizome_extract.extract.assets import assets_dir_for
+from rhizome_extract.extract.zipguard import guard
 
 
 def _slide_title(slide: Slide) -> str:
@@ -150,6 +152,8 @@ def convert_pptx(source: Path, output: Path) -> str:
     """
     assets_dir = assets_dir_for(output)
     counter = [0]
+    with zipfile.ZipFile(source) as archive:
+        guard(archive, source)
     presentation = Presentation(str(source))
     sections = [
         _render_slide(slide, number, assets_dir, counter) for number, slide in enumerate(presentation.slides, start=1)

@@ -9,17 +9,13 @@ from conftest import make_html, make_pdf  # pyrefly: ignore[missing-import]
 from rhizome_extract.cli import _bundled_hf_home, _default_bases, _hf_home, main
 
 
-def test_hf_home_prefers_environment_variable(
-    tmp_path: Path, monkeypatch
-) -> None:  # noqa: ANN001
+def test_hf_home_prefers_environment_variable(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("HF_HOME", str(tmp_path / "env-cache"))
 
     assert _hf_home(bases=[]) == tmp_path / "env-cache"
 
 
-def test_hf_home_falls_back_to_bundled_models_dir(
-    tmp_path: Path, monkeypatch
-) -> None:  # noqa: ANN001
+def test_hf_home_falls_back_to_bundled_models_dir(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.delenv("HF_HOME", raising=False)
     bundled = tmp_path / "dist" / "models" / "huggingface"
     bundled.mkdir(parents=True)
@@ -27,17 +23,13 @@ def test_hf_home_falls_back_to_bundled_models_dir(
     assert _hf_home(bases=[tmp_path / "dist"]) == bundled
 
 
-def test_hf_home_falls_back_to_home_cache(
-    tmp_path: Path, monkeypatch
-) -> None:  # noqa: ANN001
+def test_hf_home_falls_back_to_home_cache(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.delenv("HF_HOME", raising=False)
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
-    assert _hf_home(bases=[tmp_path / "empty"]) == (
-        fake_home / ".rhizome" / "models" / "huggingface"
-    )
+    assert _hf_home(bases=[tmp_path / "empty"]) == (fake_home / ".rhizome" / "models" / "huggingface")
 
 
 def test_bundled_hf_home_skips_missing_dirs(tmp_path: Path) -> None:

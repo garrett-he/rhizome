@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { createCategory, deleteCategory, listCategories, renameCategory } from "@/lib/categories";
+import { confirmAction } from "@/lib/dialog";
 import type { CategorySummary } from "@/types/category";
 
 function toMessage(err: unknown): string {
@@ -81,7 +82,7 @@ export function useCategories() {
                 category.document_count > 0
                     ? `删除分类「${category.name}」将把 ${category.document_count} 个文档变为未分类，确定删除？`
                     : `确定删除分类「${category.name}」？`;
-            if (!window.confirm(message)) {
+            if (!(await confirmAction(message))) {
                 return;
             }
             try {

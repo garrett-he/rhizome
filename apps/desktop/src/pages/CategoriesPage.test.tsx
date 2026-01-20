@@ -4,11 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { confirmAction } from "@/lib/dialog";
 import { CategoriesPage } from "./CategoriesPage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/lib/dialog", () => ({ confirmAction: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke) as unknown as Mock;
+const confirmMock = vi.mocked(confirmAction);
 
 const CATEGORIES = [
     { id: "cat-a", name: "技术笔记", document_count: 3 },
@@ -34,6 +37,8 @@ function mockDefault() {
 
 beforeEach(() => {
     invokeMock.mockReset();
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
     mockDefault();
 });
 
@@ -135,7 +140,6 @@ describe("CategoriesPage", () => {
     });
 
     it("deletes a category after confirm and shows detach note", async () => {
-        const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
         const user = userEvent.setup();
         renderPage();
         await screen.findByText("技术笔记");
@@ -152,12 +156,12 @@ describe("CategoriesPage", () => {
         await user.click(screen.getAllByRole("button", { name: "删除" })[0]);
 
         expect(await screen.findByText("已删除分类「技术笔记」，3 个文档已变为未分类")).toBeTruthy();
-        expect(confirmSpy).toHaveBeenCalledWith("删除分类「技术笔记」将把 3 个文档变为未分类，确定删除？");
+        expect(confirmMock).toHaveBeenCalledWith("删除分类「技术笔记」将把 3 个文档变为未分类，确定删除？");
         expect(invokeMock).toHaveBeenCalledWith("delete_category", { id: "cat-a" });
     });
 
     it("does not delete when confirm is cancelled", async () => {
-        vi.spyOn(window, "confirm").mockReturnValue(false);
+        confirmMock.mockResolvedValue(false);
         const user = userEvent.setup();
         renderPage();
         await screen.findByText("技术笔记");

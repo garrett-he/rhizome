@@ -87,7 +87,7 @@ pub fn ensure_table(conn: &Connection) -> Result<(), String> {
 
 /// 打开库连接并保证会话表存在。
 pub fn open_conn(vault: &Path) -> Result<Connection, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     Ok(conn)
 }

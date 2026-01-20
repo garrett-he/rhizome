@@ -157,6 +157,17 @@ fn vector_leg(conn: &Connection, query: &str, limit: usize, model: Option<&dyn E
     }
 }
 
+/// 把用户查询转为 FTS5 短语法：按空白分词，每项加双引号并转义内部引号。
+/// 避免查询中的 FTS5 操作符（AND/OR/NEAR/*/括号/引号）触发语法错误导致
+/// 全文腿静默失效。多词之间用空格连接（隐式 AND）。
+fn fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// FTS 腿：trigram 查询需 >= 3 字符；MATCH 语法错误降级为空（log 留证据）。
 fn fts_leg(conn: &Connection, query: &str, limit: usize) -> Vec<i64> {
     if query.chars().count() < MIN_FTS_QUERY_CHARS {
@@ -165,6 +176,7 @@ fn fts_leg(conn: &Connection, query: &str, limit: usize) -> Vec<i64> {
     if !table_exists(conn, "chunks_fts") {
         return Vec::new();
     }
+    let match_query = fts_query(query);
     let mut stmt = match conn.prepare("SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?1 ORDER BY rank LIMIT ?2") {
         Ok(stmt) => stmt,
         Err(error) => {
@@ -172,7 +184,7 @@ fn fts_leg(conn: &Connection, query: &str, limit: usize) -> Vec<i64> {
             return Vec::new();
         }
     };
-    let rows = stmt.query_map(params![query, limit as i64], |row| row.get::<_, i64>(0));
+    let rows = stmt.query_map(params![match_query, limit as i64], |row| row.get::<_, i64>(0));
     match rows {
         Ok(rows) => rows.filter_map(Result::ok).collect(),
         Err(error) => {

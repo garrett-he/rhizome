@@ -16,6 +16,7 @@ load embedded images.
 """
 
 import warnings
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from openpyxl.workbook.workbook import Workbook  # pyrefly: ignore
 from openpyxl.worksheet.worksheet import Worksheet  # pyrefly: ignore
 
 from rhizome_extract.extract.assets import assets_dir_for
+from rhizome_extract.extract.zipguard import guard
 
 
 def _cell_to_text(value: object) -> str:
@@ -127,6 +129,8 @@ def convert_excel(source: Path, output: Path) -> str:
     """
     assets_dir = assets_dir_for(output)
     counter = [0]
+    with zipfile.ZipFile(source) as archive:
+        guard(archive, source)
     with warnings.catch_warnings():
         # WPS-generated workbooks miss the default style; that is harmless.
         warnings.simplefilter("ignore", UserWarning)

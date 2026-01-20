@@ -2,14 +2,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { confirmAction } from "@/lib/dialog";
 import { useCategories } from "./useCategories";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/lib/dialog", () => ({ confirmAction: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke) as unknown as Mock;
+const confirmMock = vi.mocked(confirmAction);
 
 beforeEach(() => {
     invokeMock.mockReset();
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
     invokeMock.mockResolvedValue([]);
 });
 
@@ -47,7 +52,7 @@ describe("useCategories", () => {
     });
 
     it("does not delete when confirm is dismissed", async () => {
-        vi.spyOn(window, "confirm").mockReturnValue(false);
+        confirmMock.mockResolvedValue(false);
         const { result } = renderHook(() => useCategories());
         await waitFor(() => {
             expect(result.current.loading).toBe(false);
@@ -61,7 +66,7 @@ describe("useCategories", () => {
     });
 
     it("surfaces delete errors", async () => {
-        vi.spyOn(window, "confirm").mockReturnValue(true);
+        confirmMock.mockResolvedValue(true);
         invokeMock.mockImplementation(async (cmd: string) => {
             if (cmd === "delete_category") {
                 throw "删除失败";

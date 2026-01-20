@@ -36,17 +36,23 @@ pub fn normalize(vector: &mut [f32]) {
 }
 
 /// 返回内置本地模型；非内置名称报明确错误（本期不做远程 embedding API）。
+/// 仅缓存加载成功的结果：首次加载失败（如下载断网）后允许重试，
+/// 不把 Err 缓存到进程结束。
 pub fn default_embedding_model(model_name: &str) -> Result<Arc<dyn EmbeddingModel>, String> {
     if model_name != SUPPORTED_MODEL {
         return Err(format!(
             "不支持的本地嵌入模型: {model_name}（当前仅支持 {SUPPORTED_MODEL}）"
         ));
     }
-    static CACHED: OnceLock<Result<Arc<FastembedModel>, String>> = OnceLock::new();
-    match CACHED.get_or_init(|| FastembedModel::load().map(Arc::new)) {
-        Ok(model) => Ok(model.clone() as Arc<dyn EmbeddingModel>),
-        Err(error) => Err(error.clone()),
+    static CACHED: OnceLock<Arc<FastembedModel>> = OnceLock::new();
+    if let Some(model) = CACHED.get() {
+        return Ok(model.clone() as Arc<dyn EmbeddingModel>);
     }
+    let model = FastembedModel::load()?;
+    let arc = Arc::new(model);
+    // set 失败说明并发线程已抢先缓存成功结果，直接取用已缓存的实例
+    let cached = CACHED.get_or_init(|| arc.clone());
+    Ok(cached.clone() as Arc<dyn EmbeddingModel>)
 }
 
 impl FastembedModel {
@@ -185,7 +191,13 @@ fn ensure_file(dir: &std::path::Path, name: &str, url: &str) -> Result<PathBuf, 
     crate::logging::log("INFO", &format!("开始下载模型文件: {url}"));
     std::fs::create_dir_all(dir).map_err(|e| format!("创建模型目录失败: {e}"))?;
     let tmp = dir.join(format!("{name}.part"));
-    let mut response = match reqwest::blocking::get(url) {
+    // 下载客户端设置超时，避免镜像站挂起时阻塞线程直至永久
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| format!("创建下载客户端失败: {e}"))?;
+    let mut response = match client.get(url).send() {
         Ok(response) => response,
         Err(e) => {
             crate::logging::log("ERROR", &format!("下载模型文件失败: {url}: {e}"));

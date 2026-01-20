@@ -43,7 +43,7 @@ fn register_vec_extension() {
 /// 打开带 sqlite-vec 与 WAL 的库连接。
 pub fn open(vault: &Path) -> Result<Connection, String> {
     register_vec_extension();
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("设置 WAL 失败: {e}"))?;
     Ok(conn)

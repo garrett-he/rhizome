@@ -28,9 +28,20 @@ pub fn db_path(vault: &Path) -> PathBuf {
     vault.join(DB_FILE)
 }
 
+/// 打开 vault 数据库连接并设置 busy_timeout。
+///
+/// WAL 只解决读写并发；写写并发（如导入与后台编译同时发生）依赖
+/// busy_timeout 等锁，否则立刻报 `database is locked`。统一从此处打开。
+pub fn open_conn(vault: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("设置 busy_timeout 失败: {e}"))?;
+    Ok(conn)
+}
+
 /// 打开/创建 {vault}/rhizome.db 并确保 settings 与 documents 表存在（幂等）。
 pub fn ensure_db(vault: &Path) -> Result<(), String> {
-    let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = open_conn(vault)?;
     crate::settings::ensure_table(&conn)?;
     crate::documents::ensure_table(&conn)?;
     crate::qa::ensure_table(&conn)?;
@@ -42,7 +53,7 @@ pub fn ensure_db(vault: &Path) -> Result<(), String> {
 /// 总览统计。文档计数来自 documents 表真实查询（failed = last_error 非空）；
 /// 存储占用为 vault 目录的实时大小（含 rhizome.db 与 blobs）。
 pub fn get_overview(vault: &Path) -> Result<Overview, String> {
-    let conn = Connection::open(db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = open_conn(vault)?;
     let (total_documents, indexed_documents, pending_documents) = crate::documents::counts(&conn);
     let failed_documents = crate::documents::failed_count(&conn);
     let categories = crate::categories::stats(&conn)?;

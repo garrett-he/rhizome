@@ -10,6 +10,7 @@ Markdown links. Following docx conversion rules, no script conversion
 is applied.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -29,12 +30,15 @@ type LinkDict = dict[str, Any]
 
 @dataclass
 class _Image:
-    """One placement of a page image, sorted into the reading order."""
+    """One placement of a page image, sorted into the reading order.
+
+    Only the xref is stored during collection; image bytes are
+    extracted lazily and deduplicated by xref at render time.
+    """
 
     y: float
     x: float
-    ext: str
-    data: bytes
+    xref: int
 
 
 @dataclass
@@ -172,8 +176,12 @@ def _inside_any(x: float, y: float, tables: list[_Table]) -> bool:
     return any(table.x <= x and y <= table.y for table in tables)
 
 
-def _collect_page(page: fitz.Page, doc: fitz.Document) -> _PageData:
-    """Collect the renderable content of one page."""
+def _collect_page(page: fitz.Page) -> _PageData:
+    """Collect the renderable content of one page.
+
+    Image bytes are not extracted here; only xrefs and placements are
+    recorded so repeated images are deduplicated at render time.
+    """
     text_dict = cast("dict[str, Any]", page.get_text("dict"))
     finder = page.find_tables()
     tables = finder.tables if finder is not None else []
@@ -183,13 +191,12 @@ def _collect_page(page: fitz.Page, doc: fitz.Document) -> _PageData:
         bbox = table.bbox
         data.tables.append(_Table(y=bbox[3], x=bbox[0], rows=rows))
     for info in page.get_images(full=True):
-        extracted = doc.extract_image(info[0])
         for rect in page.get_image_rects(info[0]):
-            data.images.append(_Image(y=rect.y1, x=rect.x0, ext=extracted["ext"], data=extracted["image"]))
+            data.images.append(_Image(y=rect.y1, x=rect.x0, xref=info[0]))
     return data
 
 
-def _render_page(data: _PageData, number: int, assets_dir: Path, counter: list[int], body: float) -> list[str]:
+def _render_page(data: _PageData, number: int, resolve_asset: Callable[[int], str], body: float) -> list[str]:
     """Render one page's content in reading order."""
     elements: list[tuple[float, float, str]] = []
     for block in data.blocks:
@@ -207,11 +214,8 @@ def _render_page(data: _PageData, number: int, assets_dir: Path, counter: list[i
         if lines:
             elements.append((table.y, table.x, "\n".join(lines)))
     for image in data.images:
-        counter[0] += 1
-        name = f"page{number}_image{counter[0]}.{image.ext}"
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        (assets_dir / name).write_bytes(image.data)
-        elements.append((image.y, image.x, f"![{name}]({assets_dir.name}/{name})"))
+        ref = resolve_asset(image.xref)
+        elements.append((image.y, image.x, f"![{Path(ref).name}]({ref})"))
     elements.sort(key=lambda element: (element[0], element[1]))
     return [element[2] for element in elements]
 
@@ -220,17 +224,31 @@ def convert_pdf(source: Path, output: Path) -> str:
     """Convert a pdf file to Markdown.
 
     Pictures are extracted into ``{output.stem}_files`` next to the
-    output file and referenced with relative paths. Returns an empty
-    string when the document has no content.
+    output file and referenced with relative paths. The same embedded
+    image (xref) is extracted and written once regardless of how many
+    pages or placements reference it. Returns an empty string when the
+    document has no content.
     """
     assets_dir = assets_dir_for(output)
-    counter = [0]
     sections: list[str] = []
     with fitz.open(source) as doc:
-        pages = [_collect_page(page, doc) for page in doc]
-    body = _body_size(pages)
-    for number, data in enumerate(pages, start=1):
-        rendered = _render_page(data, number, assets_dir, counter, body)
-        if rendered:
-            sections.append("\n\n".join(rendered))
+        pages = [_collect_page(page) for page in doc]
+        body = _body_size(pages)
+        written: dict[int, str] = {}
+
+        def resolve_asset(xref: int) -> str:
+            """Extract image bytes for xref once and return its relative ref."""
+            ref = written.get(xref)
+            if ref is None:
+                extracted = doc.extract_image(xref)
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                ref = f"{assets_dir.name}/image{len(written) + 1}.{extracted['ext']}"
+                (output.parent / ref).write_bytes(extracted["image"])
+                written[xref] = ref
+            return ref
+
+        for number, data in enumerate(pages, start=1):
+            rendered = _render_page(data, number, resolve_asset, body)
+            if rendered:
+                sections.append("\n\n".join(rendered))
     return "\n\n".join(sections).strip("\n")

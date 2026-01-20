@@ -34,6 +34,8 @@ pub struct ChunkInfo {
 }
 
 /// 索引文档：空 id 列表选择全部 compiled；显式 id 不存在则产出错误结果。
+/// 向量化（网络/推理）在事务外进行（避免长时间持有 SQLite 写锁）；
+/// 每个文档独立事务提交，单文档失败不影响已完成文档。
 pub fn index_documents(
     vault: &Path,
     document_ids: &[String],
@@ -46,10 +48,9 @@ pub fn index_documents(
     index_db::ensure_fts_schema(&conn)?;
 
     let mut outcomes: Vec<IndexOutcome> = Vec::new();
-    let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
 
-    if document_ids.is_empty() {
-        let mut stmt = tx
+    let ids: Vec<String> = if document_ids.is_empty() {
+        let mut stmt = conn
             .prepare("SELECT id FROM documents WHERE status = 'compiled' ORDER BY created_at")
             .map_err(|e| format!("查询失败: {e}"))?;
         let ids = stmt
@@ -58,17 +59,16 @@ pub fn index_documents(
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("读取结果失败: {e}"))?;
         drop(stmt);
-        for id in ids {
-            outcomes.push(index_one(&tx, model, model_name, &id));
-        }
+        ids
     } else {
+        let mut ids = Vec::with_capacity(document_ids.len());
         for requested in document_ids {
-            let resolved: Option<String> = tx
+            let resolved: Option<String> = conn
                 .query_row("SELECT id FROM documents WHERE id = ?1", [requested], |row| row.get(0))
                 .optional()
                 .map_err(|e| format!("查询失败: {e}"))?;
             match resolved {
-                Some(id) => outcomes.push(index_one(&tx, model, model_name, &id)),
+                Some(id) => ids.push(id),
                 None => outcomes.push(IndexOutcome {
                     document_id: requested.clone(),
                     title: None,
@@ -78,23 +78,47 @@ pub fn index_documents(
                 }),
             }
         }
-    }
+        ids
+    };
 
-    tx.commit().map_err(|e| format!("提交失败: {e}"))?;
+    for id in ids {
+        outcomes.push(index_one(&mut conn, model, model_name, &id));
+    }
     Ok(outcomes)
 }
 
-/// 分块、向量化并持久化单个文档；返回结果。
-fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name: &str, id: &str) -> IndexOutcome {
-    let title = metadata_title(tx, id);
-    let row: Option<(String, Option<String>)> = tx
+/// 写入索引失败信息（独立事务）：last_error 记录、状态不前进。
+fn record_index_error(conn: &mut Connection, id: &str, message: &str) {
+    crate::logging::log("ERROR", &format!("文档索引失败 {id}: {message}"));
+    if let Ok(tx) = conn.transaction() {
+        let _ = tx.execute(
+            "UPDATE documents SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, message, now_rfc3339()],
+        );
+        let _ = tx.commit();
+    }
+}
+
+/// 分块、向量化并持久化单个文档；返回结果。向量化在事务外，持久化为独立事务。
+fn index_one(conn: &mut Connection, model: &dyn EmbeddingModel, model_name: &str, id: &str) -> IndexOutcome {
+    let title = metadata_title(conn, id);
+    let row: Option<(String, Option<String>)> = match conn
         .query_row(
             "SELECT status, content_compiled FROM documents WHERE id = ?1",
             [id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .unwrap_or(None);
+    {
+        Ok(row) => row,
+        Err(e) => return IndexOutcome {
+            document_id: id.to_string(),
+            title,
+            chunks: 0,
+            ok: false,
+            error: Some(format!("查询失败: {e}")),
+        },
+    };
     let Some((status, compiled)) = row else {
         return IndexOutcome {
             document_id: id.to_string(),
@@ -106,11 +130,7 @@ fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name:
     };
     if status == "raw" || compiled.is_none() {
         let message = "index: document has not been compiled; run `compile` first".to_string();
-        crate::logging::log("ERROR", &format!("文档索引失败 {id}: {message}"));
-        let _ = tx.execute(
-            "UPDATE documents SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, message, now_rfc3339()],
-        );
+        record_index_error(conn, id, &message);
         return IndexOutcome {
             document_id: id.to_string(),
             title,
@@ -123,11 +143,7 @@ fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name:
     let chunks = split_markdown(compiled.as_deref().unwrap_or_default());
     if chunks.is_empty() {
         let message = "index: document has no content to index".to_string();
-        crate::logging::log("ERROR", &format!("文档索引失败 {id}: {message}"));
-        let _ = tx.execute(
-            "UPDATE documents SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, message, now_rfc3339()],
-        );
+        record_index_error(conn, id, &message);
         return IndexOutcome {
             document_id: id.to_string(),
             title,
@@ -138,15 +154,12 @@ fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name:
     }
 
     let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+    // 向量化在事务外进行，避免长时间持有 SQLite 写锁
     let vectors = match model.embed(&texts) {
         Ok(vectors) => vectors,
         Err(error) => {
             let message = format!("index: {error}");
-            crate::logging::log("ERROR", &format!("文档索引失败 {id}: {message}"));
-            let _ = tx.execute(
-                "UPDATE documents SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
-                params![id, message, now_rfc3339()],
-            );
+            record_index_error(conn, id, &message);
             return IndexOutcome {
                 document_id: id.to_string(),
                 title,
@@ -157,13 +170,21 @@ fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name:
         }
     };
 
-    if let Err(error) = index_db::replace_chunks(tx, id, &chunks, &vectors) {
+    // 事务内替换 chunks/chunks_vec/chunks_fts 并流转状态（原子提交）
+    let tx = match conn.transaction().map_err(|e| format!("开启事务失败: {e}")) {
+        Ok(tx) => tx,
+        Err(e) => return IndexOutcome {
+            document_id: id.to_string(),
+            title,
+            chunks: 0,
+            ok: false,
+            error: Some(e),
+        },
+    };
+    if let Err(error) = index_db::replace_chunks(&tx, id, &chunks, &vectors) {
         let message = format!("index: {error}");
-        crate::logging::log("ERROR", &format!("文档索引失败 {id}: {message}"));
-        let _ = tx.execute(
-            "UPDATE documents SET last_error = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, message, now_rfc3339()],
-        );
+        drop(tx); // 释放对 conn 的可变借用，便于独立事务写 last_error
+        record_index_error(conn, id, &message);
         return IndexOutcome {
             document_id: id.to_string(),
             title,
@@ -189,6 +210,15 @@ fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name:
             error: Some(format!("写入数据库失败: {error}")),
         };
     }
+    if let Err(error) = tx.commit() {
+        return IndexOutcome {
+            document_id: id.to_string(),
+            title,
+            chunks: chunk_count,
+            ok: false,
+            error: Some(format!("提交失败: {error}")),
+        };
+    }
     crate::logging::log(
         "INFO",
         &format!("文档索引完成 {id}: {chunk_count} 个分块（{model_name}）"),
@@ -203,13 +233,16 @@ fn index_one(tx: &rusqlite::Transaction, model: &dyn EmbeddingModel, model_name:
 }
 
 /// 读取已编译元数据中的标题（无元数据为 None）。
-fn metadata_title(tx: &rusqlite::Transaction, id: &str) -> Option<String> {
-    let raw: Option<String> = tx
-        .query_row("SELECT metadata_compiled FROM documents WHERE id = ?1", [id], |row| {
-            row.get(0)
-        })
+fn metadata_title(conn: &Connection, id: &str) -> Option<String> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT metadata_compiled FROM documents WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
         .optional()
-        .unwrap_or(None);
+        .ok()
+        .flatten();
     let raw = raw?;
     let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
     value
@@ -220,7 +253,7 @@ fn metadata_title(tx: &rusqlite::Transaction, id: &str) -> Option<String> {
 
 /// 读取文档切片（详情页切片列表）；文档不存在返回 Err，无切片返回空列表。
 pub fn list_chunks(vault: &Path, document_id: &str) -> Result<Vec<ChunkInfo>, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     documents::ensure_table(&conn)?;
     let exists: Option<String> = conn
         .query_row("SELECT id FROM documents WHERE id = ?1", [document_id], |row| {

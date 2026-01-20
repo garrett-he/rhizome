@@ -24,7 +24,8 @@ export function PipelineCard({ overview }: { overview: Overview }) {
             <div className="flex items-center gap-3">
                 <StageCard count={overview.pending_documents} label="未编译" />
                 <PipelineArrow />
-                <StageCard count={0} label="已编译" />
+                {/* 已编译 = total - pending（status 为 raw 的即未编译，compiled/indexed 均已编译） */}
+                <StageCard count={overview.total_documents - overview.pending_documents} label="已编译" />
                 <PipelineArrow />
                 <StageCard count={overview.indexed_documents} label="已索引" />
                 <PipelineArrow />

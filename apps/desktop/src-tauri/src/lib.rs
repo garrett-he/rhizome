@@ -53,19 +53,20 @@ fn get_overview() -> Result<db::Overview, String> {
 }
 
 #[tauri::command]
-fn add_documents(paths: Vec<String>, category_name: Option<String>) -> Result<documents::AddSummary, String> {
+async fn add_documents(paths: Vec<String>, category_name: Option<String>) -> Result<documents::AddSummary, String> {
     let vault = current_vault()?;
     let category_id = match category_name.as_deref() {
         // 分类名非空时解析（不存在自动创建）；空串视为未指定
         Some(name) if !name.trim().is_empty() => Some(categories::ensure_category(Path::new(&vault), name)?),
         _ => None,
     };
-    Ok(documents::add_batch(
-        Path::new(&vault),
-        &paths,
-        category_id.as_deref(),
-        &extract::CliExtractor,
-    ))
+    // 导入要调 extractor 子进程（媒体类超时上限 600s），放到阻塞线程池，
+    // 避免同步命令跑在主线程时冻结整个窗口
+    tauri::async_runtime::spawn_blocking(move || {
+        documents::add_batch(Path::new(&vault), &paths, category_id.as_deref(), &extract::CliExtractor)
+    })
+    .await
+    .map_err(|e| format!("导入任务异常退出: {e}"))
 }
 
 #[tauri::command]

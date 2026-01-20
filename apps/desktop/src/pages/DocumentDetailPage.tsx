@@ -11,6 +11,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { useCategories } from "@/hooks/useCategories";
 import { useDocumentDetail } from "@/hooks/useDocumentDetail";
 import { setDocumentCategory } from "@/lib/categories";
+import { confirmAction } from "@/lib/dialog";
 import { compileDocuments, indexDocuments, revealBlob } from "@/lib/documents";
 import { formatBytes, formatShortDate } from "@/lib/format";
 import { charCount, shortSha1, splitByChunkMarkers } from "@/lib/markdown";
@@ -148,9 +149,9 @@ export function DocumentDetailPage() {
         }
     };
 
-    const handleRecompile = () => {
+    const handleRecompile = async () => {
         // 强制重编译会覆盖现有编译稿并清除旧切片
-        if (!window.confirm(`确定重新编译「${title}」吗？现有编译稿与切片将被覆盖。`)) {
+        if (!(await confirmAction(`确定重新编译「${title}」吗？现有编译稿与切片将被覆盖。`))) {
             return;
         }
         void runAction("recompile", async () => {

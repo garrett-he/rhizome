@@ -34,7 +34,7 @@ pub fn default_prompt(name: &str) -> Option<&'static str> {
 }
 
 pub fn get_all(vault: &Path) -> Result<Vec<SettingEntry>, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     let mut stmt = conn
         .prepare("SELECT key, value FROM settings ORDER BY key")
@@ -53,7 +53,7 @@ pub fn get_all(vault: &Path) -> Result<Vec<SettingEntry>, String> {
 
 /// 读取单个设置键（不存在为 None）
 pub fn get(vault: &Path, key: &str) -> Result<Option<String>, String> {
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| row.get(0))
         .optional()
@@ -65,7 +65,7 @@ pub fn set(vault: &Path, key: &str, value: Option<String>) -> Result<(), String>
     if key.trim().is_empty() {
         return Err("设置键不能为空".to_string());
     }
-    let conn = Connection::open(crate::db::db_path(vault)).map_err(|e| format!("打开数据库失败: {e}"))?;
+    let conn = crate::db::open_conn(vault)?;
     ensure_table(&conn)?;
     let result = match &value {
         Some(v) => conn.execute(
