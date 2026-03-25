@@ -89,11 +89,15 @@ export function useQa() {
     }, [refreshConversations]);
 
     useEffect(() => {
-        // 先建立监听再提问（qa_ask 在流式结束后才 resolve，事件先行到达）
+        // 先建立监听再提问（qa_ask 在流式结束后才 resolve，事件先行到达）。
+        // 监听注册是异步的：StrictMode 下首次 effect 会在注册完成前被清理，
+        // 因此注册完成后需检查是否已卸载并立即解绑，否则重复监听会让 qa-done
+        // 被处理两次，第二次会清空刚固化的回答。
+        let disposed = false;
         const unlisteners: Array<() => void> = [];
         const bind = async () => {
-            unlisteners.push(
-                await listen<QaEventPayload>("qa-start", (event) => {
+            const unbinds = await Promise.all([
+                listen<QaEventPayload>("qa-start", (event) => {
                     // 新会话场景：命令 resolve 前 events 先到，用 qa-start 同步会话 id
                     if (conversationIdRef.current === null) {
                         conversationIdRef.current = event.payload.conversation_id;
@@ -158,10 +162,18 @@ export function useQa() {
                     setAsking(false);
                     void refreshConversations();
                 }),
-            );
+            ]);
+            if (disposed) {
+                unbinds.forEach((unbind) => {
+                    unbind();
+                });
+                return;
+            }
+            unlisteners.push(...unbinds);
         };
         void bind();
         return () => {
+            disposed = true;
             unlisteners.forEach((unbind) => {
                 unbind();
             });

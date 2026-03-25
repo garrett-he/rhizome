@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,12 +10,20 @@ import { QaPage } from "./QaPage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-// 受控 listen：测试通过 handlers 触发事件回调
+// 受控 listen：同一事件可注册多个监听（用于验证重复绑定），测试通过 emit 触发回调
 type Handler = (event: { payload: Record<string, unknown> }) => void;
-const eventHandlers = new Map<string, Handler>();
+const eventHandlers = new Map<string, Handler[]>();
 const listenMock = vi.fn(async (event: string, handler: Handler) => {
-    eventHandlers.set(event, handler);
-    return () => eventHandlers.delete(event);
+    const handlers = eventHandlers.get(event) ?? [];
+    handlers.push(handler);
+    eventHandlers.set(event, handlers);
+    return () => {
+        const current = eventHandlers.get(event) ?? [];
+        const index = current.indexOf(handler);
+        if (index >= 0) {
+            current.splice(index, 1);
+        }
+    };
 });
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -24,7 +33,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 const invokeMock = vi.mocked(invoke) as unknown as Mock;
 
 function emit(event: string, payload: Record<string, unknown>) {
-    eventHandlers.get(event)?.({ payload });
+    for (const handler of eventHandlers.get(event) ?? []) {
+        handler({ payload });
+    }
 }
 
 const CONVERSATION: ConversationSummary = {
@@ -113,6 +124,40 @@ describe("QaPage", () => {
             question: "服务拆分要注意什么？",
             conversationId: undefined,
         });
+    });
+
+    it("keeps the streamed reply when effects run twice under StrictMode", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "qa_ask") {
+                emit("qa-start", { conversation_id: "conv1" });
+                emit("qa-delta", { conversation_id: "conv1", text: "服务拆分要" });
+                emit("qa-delta", { conversation_id: "conv1", text: "注意业务边界。" });
+                emit("qa-done", { conversation_id: "conv1", message_id: 7, sources: [] });
+                return { conversation_id: "conv1", sources: [] };
+            }
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            if (cmd === "list_messages") {
+                return [];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        render(
+            <StrictMode>
+                <MemoryRouter>
+                    <QaPage />
+                </MemoryRouter>
+            </StrictMode>,
+        );
+        await screen.findByText("输入问题，从知识库中寻找答案");
+
+        await user.type(screen.getByLabelText("问题"), "问题");
+        await user.click(screen.getByRole("button", { name: "发送" }));
+
+        // 监听若重复绑定，第二个 qa-done 会用空内容覆盖刚固化的回答
+        expect(await screen.findByText(/服务拆分要注意业务边界。/)).toBeTruthy();
     });
 
     it("does not send empty question", async () => {
