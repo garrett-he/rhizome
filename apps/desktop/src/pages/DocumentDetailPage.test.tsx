@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { save } from "@tauri-apps/plugin-dialog";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -10,11 +10,11 @@ import type { ChunkInfo, DocumentDetail } from "@/types/document";
 import { DocumentDetailPage } from "./DocumentDetailPage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 vi.mock("@/lib/dialog", () => ({ confirmAction: vi.fn() }));
 
 const invokeMock = vi.mocked(invoke) as unknown as Mock;
-const revealMock = vi.mocked(revealItemInDir) as unknown as Mock;
+const saveDialogMock = vi.mocked(save) as unknown as Mock;
 const confirmMock = vi.mocked(confirmAction);
 
 const COMPILED =
@@ -97,8 +97,8 @@ function mockHappyPath(
 
 beforeEach(() => {
     invokeMock.mockReset();
-    revealMock.mockReset();
-    revealMock.mockResolvedValue(undefined);
+    saveDialogMock.mockReset();
+    saveDialogMock.mockResolvedValue("C:\\Users\\me\\Documents\\notes.md");
     // jsdom 未实现平滑滚动
     Element.prototype.scrollIntoView = vi.fn();
     confirmMock.mockResolvedValue(true);
@@ -213,17 +213,36 @@ describe("DocumentDetailPage", () => {
         });
     });
 
-    it("reveals the blob file in file manager", async () => {
+    it("saves the original file with its original file name", async () => {
         mockHappyPath();
         const user = userEvent.setup();
         renderPage();
         await screen.findByText("01 · 服务拆分");
 
-        await user.click(screen.getByRole("button", { name: "打开原始文件" }));
+        await user.click(screen.getByRole("button", { name: "保存原始文件" }));
 
         await waitFor(() => {
-            expect(revealMock).toHaveBeenCalledWith("C:\\vault\\blobs\\a3\\f9\\a3f9e2");
+            expect(saveDialogMock).toHaveBeenCalledWith({ defaultPath: "notes.md" });
+            expect(invokeMock).toHaveBeenCalledWith("save_document_file", {
+                id: "doc1",
+                target: "C:\\Users\\me\\Documents\\notes.md",
+            });
         });
+    });
+
+    it("does not save when the dialog is cancelled", async () => {
+        mockHappyPath();
+        saveDialogMock.mockResolvedValue(null);
+        const user = userEvent.setup();
+        renderPage();
+        await screen.findByText("01 · 服务拆分");
+
+        await user.click(screen.getByRole("button", { name: "保存原始文件" }));
+
+        await waitFor(() => {
+            expect(saveDialogMock).toHaveBeenCalled();
+        });
+        expect(invokeMock).not.toHaveBeenCalledWith("save_document_file", expect.anything());
     });
 
     it("shows error state with back link when document is missing", async () => {

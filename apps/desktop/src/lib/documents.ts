@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
     AddSummary,
     ChunkInfo,
@@ -39,8 +38,13 @@ export async function listChunks(id: string): Promise<ChunkInfo[]> {
     return invoke<ChunkInfo[]>("list_chunks", { documentId: id });
 }
 
-export async function revealBlob(path: string): Promise<void> {
-    await revealItemInDir(path);
+/** 弹保存对话框（默认文件名为原始文件名），将 blob 中的原始文件另存为到所选路径。 */
+export async function saveDocumentFile(id: string, fileName: string): Promise<void> {
+    const target = await save({ defaultPath: fileName });
+    if (target === null) {
+        return;
+    }
+    await invoke("save_document_file", { id, target });
 }
 
 export async function compileDocuments(documentIds: string[], force = false): Promise<CompileOutcome[]> {

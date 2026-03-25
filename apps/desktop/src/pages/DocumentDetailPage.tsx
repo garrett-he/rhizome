@@ -1,4 +1,4 @@
-import { Boxes, ExternalLink, Loader2, RefreshCw, WandSparkles } from "lucide-react";
+import { Boxes, Download, Loader2, RefreshCw, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -12,7 +12,7 @@ import { useCategories } from "@/hooks/useCategories";
 import { useDocumentDetail } from "@/hooks/useDocumentDetail";
 import { setDocumentCategory } from "@/lib/categories";
 import { confirmAction } from "@/lib/dialog";
-import { compileDocuments, indexDocuments, revealBlob } from "@/lib/documents";
+import { compileDocuments, indexDocuments, saveDocumentFile } from "@/lib/documents";
 import { formatBytes, formatShortDate } from "@/lib/format";
 import { charCount, shortSha1, splitByChunkMarkers } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
@@ -172,9 +172,9 @@ export function DocumentDetailPage() {
         });
     };
 
-    const handleReveal = () => {
-        void runAction("reveal", async () => {
-            await revealBlob(detail.blob_path);
+    const handleSaveOriginal = () => {
+        void runAction("save", async () => {
+            await saveDocumentFile(detail.id, detail.file_name);
         });
     };
 
@@ -211,14 +211,14 @@ export function DocumentDetailPage() {
                             variant="outline"
                             size="sm"
                             disabled={busy !== null}
-                            onClick={handleReveal}
+                            onClick={handleSaveOriginal}
                         >
-                            {busy === "reveal" ? (
+                            {busy === "save" ? (
                                 <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
                             ) : (
-                                <ExternalLink aria-hidden className="h-4 w-4" />
+                                <Download aria-hidden className="h-4 w-4" />
                             )}
-                            打开原始文件
+                            保存原始文件
                         </Button>
                         <Button
                             type="button"

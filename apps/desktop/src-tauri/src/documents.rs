@@ -402,6 +402,19 @@ pub fn get_detail(vault: &Path, id: &str) -> Result<DocumentDetail, String> {
     })
 }
 
+/// 将 blob 中的原始文件另存为到目标路径；文档不存在返回 Err。
+pub fn export_original(vault: &Path, id: &str, target: &str) -> Result<(), String> {
+    let conn = crate::db::open_conn(vault)?;
+    let sha1: Option<String> = conn
+        .query_row("SELECT sha1 FROM documents WHERE id = ?1", [id], |row| row.get(0))
+        .optional()
+        .map_err(|e| format!("查询失败: {e}"))?;
+    let sha1 = sha1.ok_or_else(|| format!("文档不存在: {id}"))?;
+    let source = blob_path(vault, &sha1);
+    fs::copy(&source, target).map_err(|e| format!("保存原始文件失败: {e}"))?;
+    Ok(())
+}
+
 /// 设置/更换/清除文档分类（category_id 为 None 时清除）；文档或分类不存在返回 Err。
 pub fn set_category(vault: &Path, document_id: &str, category_id: Option<&str>) -> Result<(), String> {
     let conn = crate::db::open_conn(vault)?;
@@ -718,6 +731,32 @@ mod tests {
     fn test_get_detail_missing_is_error() {
         let tmp = setup();
         let error = get_detail(tmp.path(), "nope").unwrap_err();
+        assert!(error.contains("文档不存在"));
+    }
+
+    #[test]
+    fn test_export_original_copies_blob_to_target() {
+        let tmp = setup();
+        let file = write_file(tmp.path(), "notes.md", b"# hello");
+        let id = match add(tmp.path(), file.to_str().unwrap(), None, &NoExtractor).unwrap() {
+            AddOutcome::Added { id } => id,
+            other => panic!("期望 Added，实际 {other:?}"),
+        };
+        let target = tmp.path().join("saved-notes.md");
+
+        export_original(tmp.path(), &id, target.to_str().unwrap()).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"# hello");
+        // 原始 blob 仍保留
+        let detail = get_detail(tmp.path(), &id).unwrap();
+        assert!(Path::new(&detail.blob_path).is_file());
+    }
+
+    #[test]
+    fn test_export_original_missing_document_is_error() {
+        let tmp = setup();
+        let target = tmp.path().join("saved.md");
+        let error = export_original(tmp.path(), "nope", target.to_str().unwrap()).unwrap_err();
         assert!(error.contains("文档不存在"));
     }
 

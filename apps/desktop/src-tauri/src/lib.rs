@@ -115,6 +115,11 @@ fn list_chunks(document_id: String) -> Result<Vec<indexer::ChunkInfo>, String> {
 }
 
 #[tauri::command]
+fn save_document_file(id: String, target: String) -> Result<(), String> {
+    documents::export_original(Path::new(&current_vault()?), &id, &target)
+}
+
+#[tauri::command]
 fn get_settings() -> Result<Vec<settings::SettingEntry>, String> {
     settings::get_all(Path::new(&current_vault()?))
 }
@@ -376,7 +381,6 @@ fn log_command_result<T>(command: &str, result: &Result<T, String>) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_profiles,
             create_vault,
@@ -386,6 +390,7 @@ pub fn run() {
             list_documents,
             get_document,
             list_chunks,
+            save_document_file,
             create_category,
             list_categories,
             rename_category,
