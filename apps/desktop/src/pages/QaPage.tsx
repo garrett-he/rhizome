@@ -1,6 +1,8 @@
 import { MessageCircle, SendHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { useNavigate } from "react-router-dom";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { useQa } from "@/hooks/useQa";
 import { formatRelativeTime } from "@/lib/format";
@@ -10,6 +12,51 @@ const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", 
 
 function sourceLabel(index: number): string {
     return CIRCLED[index] ?? `(${index + 1})`;
+}
+
+/** AI 回答按 Markdown 渲染；streaming 时在末尾追加光标。 */
+function MarkdownContent({ content, streaming = false }: { content: string; streaming?: boolean }) {
+    return (
+        <div className="flex min-w-0 flex-col gap-2 text-sm leading-[1.7] text-neutral-950">
+            <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                    h1: ({ children }) => <h1 className="text-lg font-semibold">{children}</h1>,
+                    h2: ({ children }) => <h2 className="text-[15px] font-semibold">{children}</h2>,
+                    h3: ({ children }) => <h3 className="text-sm font-semibold">{children}</h3>,
+                    p: ({ children }) => <p className="whitespace-pre-wrap">{children}</p>,
+                    ul: ({ children }) => <ul className="list-disc pl-5">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal pl-5">{children}</ol>,
+                    code: ({ children, className }) =>
+                        className?.includes("language-") ? (
+                            <code className="block whitespace-pre-wrap rounded-md bg-muted p-3 text-[13px] leading-6">
+                                {children}
+                            </code>
+                        ) : (
+                            <code className="rounded bg-muted px-1 py-0.5 text-[13px]">{children}</code>
+                        ),
+                    pre: ({ children }) => <pre className="overflow-x-auto">{children}</pre>,
+                    blockquote: ({ children }) => (
+                        <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">
+                            {children}
+                        </blockquote>
+                    ),
+                    a: ({ children, href }) => (
+                        <a href={href} className="text-primary underline underline-offset-2">
+                            {children}
+                        </a>
+                    ),
+                }}
+            >
+                {content}
+            </ReactMarkdown>
+            {streaming && (
+                <span aria-hidden className="animate-pulse">
+                    ▍
+                </span>
+            )}
+        </div>
+    );
 }
 
 export function QaPage() {
@@ -62,9 +109,7 @@ export function QaPage() {
                                         AI
                                     </div>
                                     <div className="flex min-w-0 flex-1 flex-col gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3.5">
-                                        <p className="whitespace-pre-wrap text-sm leading-[1.7] text-neutral-950">
-                                            {entry.message.content}
-                                        </p>
+                                        <MarkdownContent content={entry.message.content} />
                                         {entry.message.sources.length > 0 && (
                                             <div className="flex flex-col gap-1.5">
                                                 <span className="text-xs text-neutral-500">引用来源</span>
@@ -97,12 +142,7 @@ export function QaPage() {
                                         AI
                                     </div>
                                     <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3.5">
-                                        <p className="whitespace-pre-wrap text-sm leading-[1.7] text-neutral-950">
-                                            {entry.content}
-                                            <span aria-hidden className="ml-0.5 animate-pulse">
-                                                ▍
-                                            </span>
-                                        </p>
+                                        <MarkdownContent content={entry.content} streaming />
                                     </div>
                                 </div>
                             );

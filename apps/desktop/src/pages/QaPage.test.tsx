@@ -126,6 +126,34 @@ describe("QaPage", () => {
         });
     });
 
+    it("renders the assistant reply as markdown", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "qa_ask") {
+                emit("qa-start", { conversation_id: "conv1" });
+                emit("qa-delta", { conversation_id: "conv1", text: "**要点**：\n\n- 第一项\n- 第二项\n\n`code`" });
+                emit("qa-done", { conversation_id: "conv1", message_id: 7, sources: [] });
+                return { conversation_id: "conv1", sources: [] };
+            }
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            if (cmd === "list_messages") {
+                return [];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("输入问题，从知识库中寻找答案");
+
+        await user.type(screen.getByLabelText("问题"), "问题");
+        await user.click(screen.getByRole("button", { name: "发送" }));
+
+        expect((await screen.findByText("要点")).tagName).toBe("STRONG");
+        expect(screen.getAllByRole("listitem")).toHaveLength(2);
+        expect(screen.getByText("code").tagName).toBe("CODE");
+    });
+
     it("keeps the streamed reply when effects run twice under StrictMode", async () => {
         const user = userEvent.setup();
         invokeMock.mockImplementation(async (cmd: string) => {
