@@ -14,7 +14,6 @@ function toMessage(err: unknown): string {
 
 export function useOverview() {
     const [overview, setOverview] = useState<Overview | null>(null);
-    const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     const refresh = useCallback(async () => {
@@ -23,8 +22,6 @@ export function useOverview() {
             setError(null);
         } catch (err) {
             setError(toMessage(err));
-        } finally {
-            setLoading(false);
         }
     }, []);
 
@@ -32,5 +29,5 @@ export function useOverview() {
         void refresh();
     }, [refresh]);
 
-    return { overview, loading, error, refresh };
+    return { overview, error };
 }
