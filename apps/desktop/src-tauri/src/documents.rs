@@ -170,7 +170,7 @@ fn sha1_file(path: &Path) -> Result<(String, u64), String> {
 }
 
 /// 按扩展名判型（魔数探测留待后续按需补充）。md/txt/srt 为纯文本直读，
-/// 其余类型经 extractor 抽取为 Markdown/OCR/SRT 文本。
+/// 其余类型经 any2txt 抽取为 Markdown/OCR/SRT 文本。
 fn detect_mime(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         // 纯文本
@@ -224,13 +224,13 @@ fn blob_path(vault: &Path, sha1: &str) -> PathBuf {
     vault.join("blobs").join(&sha1[0..2]).join(&sha1[2..4]).join(sha1)
 }
 
-/// 文本抽取入口（依赖注入）：lib.rs 注入 extract::CliExtractor，测试注入 fake。
+/// 文本抽取入口（依赖注入）：lib.rs 注入 extract::Any2txtExtractor，测试注入 fake。
 pub trait ExtractsText {
     fn extract(&self, vault: &Path, path: &Path, timeout: std::time::Duration) -> Result<String, String>;
 }
 
 /// 添加单个文档（对齐 deprecated add 流程）：sha1 去重跳过、纯文本直读 /
-/// 其余类型经 extractor 抽取为文本、复制原文到 blobs 分片目录、插入
+/// 其余类型经 any2txt 抽取为文本、复制原文到 blobs 分片目录、插入
 /// status='raw' 行。去重与插入经 INSERT OR IGNORE 原子判定（并发导入同一
 /// 文件时后到方安全跳过、不删除对方 blob）；自身插入失败时回滚删除 blob。
 fn add(

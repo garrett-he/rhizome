@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from conftest import make_html, make_pdf  # pyrefly: ignore[missing-import]
-from rhizome_extract.cli import _bundled_hf_home, _default_bases, _hf_home, main
+from rhizome_extract.cli import _bundled_hf_home, _default_bases, _external_deps_dir, _hf_home, main
 
 
 def test_hf_home_prefers_environment_variable(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
@@ -40,11 +40,31 @@ def test_bundled_hf_home_skips_missing_dirs(tmp_path: Path) -> None:
 def test_default_bases_frozen_mode(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     exe = tmp_path / "dist" / "extractor" / "rhizome-extract.exe"
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", str(exe))
+    # onefile 中 sys.executable 指向临时解包目录，原始路径只在 argv[0]
+    monkeypatch.setattr(sys, "argv", [str(exe)])
 
     bases = _default_bases()
     assert bases[0] == tmp_path / "dist" / "extractor"
     assert bases[1] == tmp_path / "dist"
+
+
+def test_external_deps_dir_frozen_mode(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    exe = tmp_path / "dist" / "extractor" / "rhizome-extract.exe"
+    deps = exe.parent / "deps"
+    deps.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "argv", [str(exe)])
+
+    assert _external_deps_dir() == deps
+
+
+def test_external_deps_dir_missing_returns_none(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    exe = tmp_path / "dist" / "extractor" / "rhizome-extract.exe"
+    exe.parent.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "argv", [str(exe)])
+
+    assert _external_deps_dir() is None
 
 
 def test_default_bases_dev_mode_points_at_repo_root() -> None:

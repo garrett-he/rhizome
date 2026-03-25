@@ -12,7 +12,7 @@ description = """\
 keywords = [ "documents", "extraction", "markdown", "ocr", "srt" ]
 license = { text = "MIT" }
 maintainers = [ { name = "Garrett HE", email = "garrett.he@outlook.com" } ]
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "av<16",
     "beautifulsoup4>=4.15.0",

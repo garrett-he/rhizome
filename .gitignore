@@ -13,6 +13,7 @@ __pycache__/
 *.egg-info/
 .ruff_cache/
 .pyrefly/
+apps/extractor/build/
 
 # os
 .DS_Store

@@ -11,6 +11,12 @@ import os
 import sys
 from pathlib import Path
 
+_DEPS_DIRNAME = "deps"
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_UNSUPPORTED = 2
+
 
 def _bundled_hf_home(bases: list[Path]) -> Path | None:
     """返回 bases 中第一个存在 models/huggingface 目录的位置。"""
@@ -21,14 +27,33 @@ def _bundled_hf_home(bases: list[Path]) -> Path | None:
     return None
 
 
-def _default_bases() -> list[Path]:
-    """模型查找基准目录：打包后取可执行文件旁（dist 布局），开发取仓库内。"""
+def _compiled_exe_dir() -> Path | None:
+    """打包后可执行文件所在目录；开发模式返回 None。
+
+    Nuitka onefile 中 sys.executable 指向临时解包目录里的 python.exe，
+    只有 sys.argv[0] 保留原始 exe 路径。
+    """
     # Nuitka 编译时不设 sys.frozen，用 __compiled__ 标记检测（官方推荐方式）
     if getattr(sys, "frozen", False) or "__compiled__" in globals():
-        exe_dir = Path(sys.executable).resolve().parent
+        return Path(sys.argv[0]).resolve().parent
+    return None
+
+
+def _default_bases() -> list[Path]:
+    """模型查找基准目录：打包后取可执行文件旁（dist 布局），开发取仓库内。"""
+    if (exe_dir := _compiled_exe_dir()) is not None:
         # dist 布局：extractor/rhizome-extract.exe 或 dist 根下直接放置
         return [exe_dir, exe_dir.parent]
     return [Path(__file__).resolve().parent.parent.parent]
+
+
+def _external_deps_dir() -> Path | None:
+    """外置依赖目录：打包后可执行文件旁的 deps/（手动解压依赖 zip 得到）。"""
+    exe_dir = _compiled_exe_dir()
+    if exe_dir is None:
+        return None
+    candidate = exe_dir / _DEPS_DIRNAME
+    return candidate if candidate.is_dir() else None
 
 
 def _hf_home(bases: list[Path] | None = None) -> Path:
@@ -39,6 +64,18 @@ def _hf_home(bases: list[Path] | None = None) -> Path:
         return bundled
     return Path.home() / ".rhizome" / "models" / "huggingface"
 
+
+# 外置依赖必须在导入抽取后端之前加入 sys.path；缺失时给出明确提示，
+# 而不是让后续 import 抛出难以理解的 ModuleNotFoundError。
+if (deps_dir := _external_deps_dir()) is not None:
+    sys.path.insert(0, str(deps_dir))
+elif (exe_dir := _compiled_exe_dir()) is not None:
+    print(
+        f"缺少外置依赖目录: {exe_dir / _DEPS_DIRNAME}\n"
+        f"请下载 rhizome-extract-deps.zip 并解压到 {exe_dir}（解压后应存在 deps/ 子目录）。",
+        file=sys.stderr,
+    )
+    raise SystemExit(EXIT_FAILED)
 
 # 模型下载走 hf-mirror（与 desktop embedding.rs 约定一致），缓存目录按
 # _hf_home 优先级确定。必须在导入 faster-whisper/huggingface_hub 之前设置。
@@ -55,10 +92,6 @@ from rhizome_extract.extract import (  # noqa: E402
     extract_text,
 )
 from rhizome_extract.extract.text import HanVariant  # noqa: E402
-
-EXIT_OK = 0
-EXIT_FAILED = 1
-EXIT_UNSUPPORTED = 2
 
 _HAN_CHOICES = {variant.value: variant for variant in HanVariant}
 

@@ -9,9 +9,10 @@ knowledge base. It is a pnpm workspace monorepo:
 
 - `apps/desktop/` — Tauri desktop app (React + TypeScript frontend in
   `apps/desktop/src/`, Rust backend in `apps/desktop/src-tauri/`).
-- `apps/extractor/` — Python CLI (`rhizome-extract`) that extracts plain
-  text from documents (PDF, Office, images via OCR, audio via ASR, etc.).
-  Managed with uv; source in `apps/extractor/src/rhizome_extract/`.
+- `apps/extractor/` — legacy Python CLI (`rhizome-extract`), kept while
+  the any2txt integration settles and scheduled for deletion. Text
+  extraction now delegates to the sibling `any2txt` project via
+  `any2txt --stdout --assets drop -- <path>`; do not add features here.
 - `deprecated/` — legacy CLI implementation, kept only as a porting
   reference. Do not modify or depend on it.
 - `scripts/` — build/distribution helper scripts (e.g. `collect_dist.py`).
@@ -31,11 +32,15 @@ Use `just` recipes; run them from the repository root:
   `src/lib.rs`); extractor runs pytest.
 - `just dev` — run the Tauri app in development mode.
 - `just build` — release build: bare desktop exe (`tauri build
-  --no-bundle`), Nuitka onefile extractor, then collect artifacts and
-  model caches into `dist/`.
+  --no-bundle`), then collect it and the sibling `any2txt` release
+  artifacts into `dist/` (`dist/rhizome.exe`, `dist/any2txt/` with the
+  exe, `lib/site-packages`, and `models/base`). Build any2txt first
+  (`just release` in the sibling repo); `ANY2TXT_DIST` overrides the
+  artifact directory.
 
-Extractors-only shortcuts: `just extract-install`, `just extract-check`,
-`just extract-test`, `just extract-format`.
+Legacy extractor shortcuts (`just extract-install`, `just extract-check`,
+`just extract-test`, `just extract-format`) and the `extractor`,
+`extractor-deps`, `models` collectors still exist but are transitional.
 
 Desktop-only shortcuts: run scripts inside `apps/desktop` with
 `pnpm -C apps/desktop run <script>` (e.g. `lint`, `typecheck`,
@@ -47,12 +52,15 @@ Desktop-only shortcuts: run scripts inside `apps/desktop` with
 - Keep changes minimal and incremental; avoid porting dead code from
   `deprecated/`. Port only what the current milestone needs.
 - Rust: clippy must pass with `-D warnings`; prefer `Result`-based error
-  handling. Note the extractor CLI uses Nuitka: compiled detection is
-  `__compiled__ in globals()`, not `sys.frozen`.
-- Python (extractor): formatted and linted with ruff, type-checked with
-  pyrefly (both strict). Entry point is `rhizome-extract`; stdout must be
-  reconfigured to UTF-8. Exit codes: 0 success, 2 unsupported input,
-  1 failure.
+  handling. Document text extraction lives in `src-tauri/src/extract.rs`
+  and shells out to any2txt; binary resolution order is the `any2txt_path`
+  setting, then the bundled copy under `dist/any2txt/`, then
+  `uv run --project ../any2txt any2txt` in development. any2txt exit
+  codes: 0 success, 2 unsupported input, 1 failure; only stdout is
+  document text, stderr carries diagnostics.
+- Legacy Python (extractor): formatted and linted with ruff, type-checked
+  with pyrefly (both strict). Do not extend it; changes belong in the
+  any2txt repository.
 - Frontend: TypeScript strict mode, biome for lint/format, vitest for
   tests with branch coverage >= 80%.
 - Do not commit build output (`dist/`, `apps/extractor/build/`,
@@ -63,8 +71,10 @@ Desktop-only shortcuts: run scripts inside `apps/desktop` with
 ## Testing
 
 - Never call real LLM or embedding APIs in tests; always mock them.
-- Fixtures (documents, golden outputs) are generated programmatically in
-  `apps/extractor/tests/conftest.py`; OCR/ASR are monkeypatched.
+- Extractor fixtures (documents, golden outputs) are generated
+  programmatically in `apps/extractor/tests/conftest.py`; OCR/ASR are
+  monkeypatched. any2txt's own suite lives in the sibling repository and
+  is run there (`just test`), not here.
 - When fixing a bug, add a regression test when practical.
 - Run the narrowest relevant suite first (single package or test file),
   then the full `just check` + `just test` before considering work done.

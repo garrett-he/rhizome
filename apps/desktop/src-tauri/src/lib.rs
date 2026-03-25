@@ -60,10 +60,15 @@ async fn add_documents(paths: Vec<String>, category_name: Option<String>) -> Res
         Some(name) if !name.trim().is_empty() => Some(categories::ensure_category(Path::new(&vault), name)?),
         _ => None,
     };
-    // 导入要调 extractor 子进程（媒体类超时上限 600s），放到阻塞线程池，
+    // 导入要调 any2txt 子进程（媒体类超时上限 600s），放到阻塞线程池，
     // 避免同步命令跑在主线程时冻结整个窗口
     tauri::async_runtime::spawn_blocking(move || {
-        documents::add_batch(Path::new(&vault), &paths, category_id.as_deref(), &extract::CliExtractor)
+        documents::add_batch(
+            Path::new(&vault),
+            &paths,
+            category_id.as_deref(),
+            &extract::Any2txtExtractor,
+        )
     })
     .await
     .map_err(|e| format!("导入任务异常退出: {e}"))

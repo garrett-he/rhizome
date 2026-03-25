@@ -32,25 +32,18 @@ test:
 dev:
     pnpm -C apps/desktop run tauri dev
 
-# Build release artifacts (desktop exe + extractor onefile + models) into dist/
+# Build release artifacts (desktop exe + any2txt release) into dist/
 build:
     just build-desktop
-    just build-extractor
-    python scripts/collect_dist.py desktop extractor models
+    python scripts/collect_dist.py desktop any2txt
 
 # Build desktop bare executable (Tauri, no installer bundle)
 build-desktop:
     pnpm -C apps/desktop run tauri build --no-bundle
 
-# Build extractor one-file executable (Nuitka)
+# Build extractor executable (app + Python runtime) and external deps directory
 build-extractor:
-    uv run --project apps/extractor nuitka --onefile --assume-yes-for-downloads \
-        --output-dir=apps/extractor/build --output-filename=rhizome-extract \
-        --remove-output --include-package=rhizome_extract --include-package=rapidocr \
-        --include-package-data=rapidocr --include-package-data=pymupdf \
-        --noinclude-custom-mode=pymupdf:bytecode \
-        --noinclude-custom-mode=omegaconf:bytecode --no-prefer-source-code \
-        apps/extractor/build_entry.py
+    uv run --project apps/extractor python scripts/build_extractor.py
 
 # Collect model caches into dist/models
 build-models:
