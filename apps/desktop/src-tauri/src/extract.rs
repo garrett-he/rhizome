@@ -247,6 +247,14 @@ mod tests {
         assert_eq!(args[4..].join(" "), ANY2TXT_ARGS.join(" "));
     }
 
+    #[test]
+    fn test_any2txt_args_never_embed_assets() {
+        // Extracted text is sent to the LLM for compilation: inlined image data
+        // URIs (`--assets embed`) would make prompts enormous, so assets must be dropped.
+        assert_eq!(ANY2TXT_ARGS, ["--stdout", "--assets", "drop", "--"]);
+        assert!(!ANY2TXT_ARGS.contains(&"embed"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn test_run_returns_stdout_on_success() {
