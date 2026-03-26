@@ -45,11 +45,11 @@ function renderPage() {
 }
 
 describe("OverviewPage", () => {
-    it("renders title, actions and metrics", async () => {
+    it("renders actions and metrics without a page title", async () => {
         renderPage();
 
-        expect(await screen.findByText("知识库总览")).toBeTruthy();
-        expect(screen.getByText("文档总数")).toBeTruthy();
+        expect(await screen.findByText("文档总数")).toBeTruthy();
+        expect(screen.queryByRole("heading", { name: "知识库总览" })).toBeNull();
         expect(screen.getByText("12")).toBeTruthy();
         expect(screen.getAllByText("已索引").length).toBeGreaterThan(0);
         expect(screen.getAllByText("待处理").length).toBeGreaterThan(0);

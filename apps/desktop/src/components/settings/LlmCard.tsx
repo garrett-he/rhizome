@@ -61,7 +61,7 @@ export function LlmCard({ settings, loading, onSave }: LlmCardProps) {
     };
 
     return (
-        <SettingsCard title="LLM">
+        <SettingsCard title="大语言模型">
             <div className="flex flex-col gap-4">
                 <div className="grid grid-cols-3 gap-4">
                     {FIELDS.map((field) => (

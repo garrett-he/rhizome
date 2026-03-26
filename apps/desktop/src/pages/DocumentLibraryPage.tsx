@@ -1,6 +1,7 @@
-import { Loader2, RefreshCw, RotateCcw, Upload } from "lucide-react";
+import { RefreshCw, RotateCcw, Sparkles, Upload } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { ImportDocumentsModal } from "@/components/library/ImportDocumentsModal";
 import { Button } from "@/components/ui/button";
 import { useCategories } from "@/hooks/useCategories";
 import { useDocuments } from "@/hooks/useDocuments";
@@ -46,31 +47,41 @@ export function DocumentLibraryPage() {
     } = useDocuments();
     const { categories } = useCategories();
     const [categoryFilter, setCategoryFilter] = useState("");
-    const [importCategory, setImportCategory] = useState("");
+    const [importOpen, setImportOpen] = useState(false);
 
     const filtered = categoryFilter === "" ? documents : documents.filter((doc) => doc.category_id === categoryFilter);
 
+    const handleImport = async (categoryName: string | undefined, paths: string[]): Promise<void> => {
+        await importFiles(categoryName, paths);
+    };
+
     return (
         <div className="flex flex-col gap-5 p-8">
-            <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-semibold text-neutral-950">文档库</h1>
+            <div className="flex items-center justify-between gap-3">
+                <select
+                    aria-label="分类筛选"
+                    value={categoryFilter}
+                    onChange={(event) => setCategoryFilter(event.target.value)}
+                    className="h-9 rounded-md border border-neutral-200 bg-neutral-50 px-2 text-sm text-neutral-950 outline-none transition-colors focus:border-neutral-400"
+                >
+                    <option value="">全部分类</option>
+                    {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                            {category.name}
+                        </option>
+                    ))}
+                </select>
                 <div className="flex gap-3">
-                    <select
-                        aria-label="分类筛选"
-                        value={categoryFilter}
-                        onChange={(event) => setCategoryFilter(event.target.value)}
-                        className="h-9 rounded-md border border-neutral-200 bg-neutral-50 px-2 text-sm text-neutral-950 outline-none transition-colors focus:border-neutral-400"
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="刷新"
+                        title="刷新"
+                        disabled={loading}
+                        onClick={() => void refresh()}
                     >
-                        <option value="">全部分类</option>
-                        {categories.map((category) => (
-                            <option key={category.id} value={category.id}>
-                                {category.name}
-                            </option>
-                        ))}
-                    </select>
-                    <Button type="button" variant="outline" disabled={loading} onClick={() => void refresh()}>
                         <RefreshCw aria-hidden className="h-4 w-4" />
-                        刷新
                     </Button>
                     <Button
                         type="button"
@@ -78,32 +89,10 @@ export function DocumentLibraryPage() {
                         disabled={loading || processing || documents.length === 0}
                         onClick={() => void processAll()}
                     >
-                        {processing ? (
-                            <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <RotateCcw aria-hidden className="h-4 w-4" />
-                        )}
+                        <Sparkles aria-hidden className="h-4 w-4" />
                         编译并索引
                     </Button>
-                    <select
-                        aria-label="导入分类"
-                        value={importCategory}
-                        onChange={(event) => setImportCategory(event.target.value)}
-                        disabled={loading || processing}
-                        className="h-9 rounded-md border border-neutral-200 bg-neutral-50 px-2 text-sm text-neutral-950 outline-none transition-colors focus:border-neutral-400"
-                    >
-                        <option value="">导入时不设分类</option>
-                        {categories.map((category) => (
-                            <option key={category.id} value={category.name}>
-                                导入到「{category.name}」
-                            </option>
-                        ))}
-                    </select>
-                    <Button
-                        type="button"
-                        disabled={loading || processing}
-                        onClick={() => void importFiles(importCategory === "" ? undefined : importCategory)}
-                    >
+                    <Button type="button" disabled={loading || processing} onClick={() => setImportOpen(true)}>
                         <Upload aria-hidden className="h-4 w-4" />
                         导入文档
                     </Button>
@@ -212,6 +201,15 @@ export function DocumentLibraryPage() {
                         })}
                     </tbody>
                 </table>
+            )}
+
+            {importOpen && (
+                <ImportDocumentsModal
+                    categories={categories}
+                    disabled={loading || processing}
+                    onClose={() => setImportOpen(false)}
+                    onImport={handleImport}
+                />
             )}
         </div>
     );

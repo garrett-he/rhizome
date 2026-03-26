@@ -1,4 +1,4 @@
-import { Check, FolderPlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, FolderPlus, Pencil, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,7 +46,7 @@ function RenameRow({
 }
 
 export function CategoriesPage() {
-    const { categories, loading, error, note, create, rename, remove, refresh } = useCategories();
+    const { categories, loading, error, note, create, rename, remove } = useCategories();
     const [newName, setNewName] = useState("");
     const [creating, setCreating] = useState(false);
     const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -69,14 +69,6 @@ export function CategoriesPage() {
 
     return (
         <div className="flex flex-col gap-5 p-8">
-            <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-semibold text-neutral-950">分类管理</h1>
-                <Button type="button" variant="outline" disabled={loading} onClick={() => void refresh()}>
-                    <RefreshCw aria-hidden className="h-4 w-4" />
-                    刷新
-                </Button>
-            </div>
-
             <form className="flex items-center gap-3" onSubmit={(event) => event.preventDefault()}>
                 <Input
                     aria-label="分类名"

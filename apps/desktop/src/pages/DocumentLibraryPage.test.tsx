@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
@@ -54,6 +54,19 @@ describe("DocumentLibraryPage", () => {
         expect(await screen.findByText("暂无文档，点击右上角导入文档添加")).toBeTruthy();
     });
 
+    it("drops the page title and exposes refresh as an icon button", async () => {
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
+        await screen.findByText("暂无文档，点击右上角导入文档添加");
+
+        expect(screen.queryByRole("heading", { name: "文档库" })).toBeNull();
+        expect(screen.getByLabelText("分类筛选")).toBeTruthy();
+        expect(screen.getByRole("button", { name: "刷新" })).toBeTruthy();
+    });
+
     it("renders document rows with formatted columns", async () => {
         invokeMock.mockResolvedValue([
             doc({ file_name: "notes.md" }),
@@ -97,14 +110,16 @@ describe("DocumentLibraryPage", () => {
             return [doc({ file_name: "a.md" })];
         });
         await user.click(screen.getByRole("button", { name: "导入文档" }));
+        const dialog = await screen.findByRole("dialog", { name: "导入文档" });
+        await user.click(within(dialog).getByRole("button", { name: "选择文件" }));
+        expect(await within(dialog).findByText("a.md")).toBeTruthy();
+        expect(within(dialog).getByText("b.png")).toBeTruthy();
+        await user.click(within(dialog).getByRole("button", { name: "导入" }));
 
         expect(await screen.findByText(/新增 1 · 跳过 0 · 失败 1/)).toBeTruthy();
         expect(screen.getByText(/自动处理完成：编译 1 · 索引 1/)).toBeTruthy();
         expect(screen.getByText("a.md")).toBeTruthy();
-        expect(openMock).toHaveBeenCalledWith({
-            multiple: true,
-            filters: expect.arrayContaining([{ name: "纯文本", extensions: ["md", "txt", "srt"] }]),
-        });
+        expect(openMock).toHaveBeenCalledWith({ multiple: true });
     });
 
     it("silently skips auto processing when LLM is not configured", async () => {
@@ -127,13 +142,35 @@ describe("DocumentLibraryPage", () => {
             return [doc({ file_name: "a.md" })];
         });
         await user.click(screen.getByRole("button", { name: "导入文档" }));
+        const dialog = await screen.findByRole("dialog", { name: "导入文档" });
+        await user.click(within(dialog).getByRole("button", { name: "选择文件" }));
+        await user.click(within(dialog).getByRole("button", { name: "导入" }));
 
         expect(await screen.findByText(/新增 1 · 跳过 0 · 失败 0/)).toBeTruthy();
         expect(screen.queryByText(/自动处理完成/)).toBeNull();
         expect(screen.queryByRole("alert")).toBeNull();
     });
 
-    it("cancelling the dialog imports nothing", async () => {
+    it("cancels the import dialog without importing", async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter>
+                <DocumentLibraryPage />
+            </MemoryRouter>,
+        );
+        await screen.findByText("暂无文档，点击右上角导入文档添加");
+
+        await user.click(screen.getByRole("button", { name: "导入文档" }));
+        const dialog = await screen.findByRole("dialog", { name: "导入文档" });
+        await user.click(within(dialog).getByRole("button", { name: "取消" }));
+
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(openMock).not.toHaveBeenCalled();
+        expect(invokeMock).not.toHaveBeenCalledWith("add_documents", expect.anything());
+        expect(screen.queryByText(/新增/)).toBeNull();
+    });
+
+    it("keeps import disabled when file selection is cancelled", async () => {
         const user = userEvent.setup();
         render(
             <MemoryRouter>
@@ -144,12 +181,11 @@ describe("DocumentLibraryPage", () => {
 
         openMock.mockResolvedValue(null);
         await user.click(screen.getByRole("button", { name: "导入文档" }));
+        const dialog = await screen.findByRole("dialog", { name: "导入文档" });
+        await user.click(within(dialog).getByRole("button", { name: "选择文件" }));
 
-        await waitFor(() => {
-            expect(openMock).toHaveBeenCalled();
-        });
+        expect(await within(dialog).findByRole("button", { name: "导入" })).toBeDisabled();
         expect(invokeMock).not.toHaveBeenCalledWith("add_documents", expect.anything());
-        expect(screen.queryByText(/新增/)).toBeNull();
     });
 
     it("shows inline error when listing fails", async () => {
@@ -313,8 +349,11 @@ describe("DocumentLibraryPage", () => {
             return [doc({ file_name: "a.md", category_id: "cat-a", category_name: "技术笔记" })];
         });
         openMock.mockResolvedValue(["C:\\docs\\a.md"]);
-        await user.selectOptions(screen.getByLabelText("导入分类"), "技术笔记");
         await user.click(screen.getByRole("button", { name: "导入文档" }));
+        const dialog = await screen.findByRole("dialog", { name: "导入文档" });
+        await user.selectOptions(within(dialog).getByLabelText("导入分类"), "技术笔记");
+        await user.click(within(dialog).getByRole("button", { name: "选择文件" }));
+        await user.click(within(dialog).getByRole("button", { name: "导入" }));
 
         await waitFor(() => {
             expect(invokeMock).toHaveBeenCalledWith("add_documents", {

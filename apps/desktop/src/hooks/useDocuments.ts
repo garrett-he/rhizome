@@ -4,7 +4,6 @@ import {
     compileDocuments,
     indexDocuments,
     listDocuments,
-    pickFiles,
     processDocuments,
 } from "@/lib/documents";
 import type { AddSummary, DocumentSummary, ProcessSummary } from "@/types/document";
@@ -48,33 +47,32 @@ export function useDocuments() {
         void refresh();
     }, [refresh]);
 
-    const importFiles = useCallback(async (categoryName?: string): Promise<AddSummary | null> => {
-        setError(null);
-        setProcessNote(null);
-        try {
-            const paths = await pickFiles();
-            if (paths.length === 0) {
+    const importFiles = useCallback(
+        async (categoryName: string | undefined, paths: string[]): Promise<AddSummary | null> => {
+            setError(null);
+            setProcessNote(null);
+            try {
+                const result = await addDocumentsCmd(paths, categoryName);
+                setSummary(result);
+                if (result.added > 0) {
+                    // 自动 compile→index；LLM/embedding 未配置或失败时静默保持 raw，
+                    // 用户可稍后手动重试
+                    try {
+                        const processed = await processDocuments();
+                        setProcessNote(`自动处理完成：${summarize(processed)}`);
+                    } catch {
+                        setProcessNote(null);
+                    }
+                }
+                setDocuments(await listDocuments());
+                return result;
+            } catch (err) {
+                setError(toMessage(err));
                 return null;
             }
-            const result = await addDocumentsCmd(paths, categoryName);
-            setSummary(result);
-            if (result.added > 0) {
-                // 自动 compile→index；LLM/embedding 未配置或失败时静默保持 raw，
-                // 用户可稍后手动重试
-                try {
-                    const processed = await processDocuments();
-                    setProcessNote(`自动处理完成：${summarize(processed)}`);
-                } catch {
-                    setProcessNote(null);
-                }
-            }
-            setDocuments(await listDocuments());
-            return result;
-        } catch (err) {
-            setError(toMessage(err));
-            return null;
-        }
-    }, []);
+        },
+        [],
+    );
 
     /// 手动全量处理（编译全部 raw → 索引全部 compiled），错误显式展示
     const processAll = useCallback(async (): Promise<ProcessSummary | null> => {

@@ -35,8 +35,6 @@ export function OverviewPage() {
 
     return (
         <div className="flex flex-col gap-6 p-8">
-            <h1 className="text-2xl font-semibold text-neutral-950">知识库总览</h1>
-
             {error && (
                 <p role="alert" className="text-[13px] text-red-600">
                     {error}

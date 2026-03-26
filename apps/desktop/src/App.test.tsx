@@ -54,7 +54,7 @@ describe("App", () => {
         });
         render(<App />);
 
-        expect(await screen.findByText("知识库总览")).toBeTruthy();
+        expect(await screen.findByText("文档总数")).toBeTruthy();
         expect(screen.getByText("C:\\vaults\\main")).toBeTruthy();
     });
 });

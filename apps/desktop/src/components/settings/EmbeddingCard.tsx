@@ -21,10 +21,7 @@ export function EmbeddingCard({ value, onSave }: EmbeddingCardProps) {
     const options = known ? EMBEDDING_MODELS : [{ id: current, label: current }, ...EMBEDDING_MODELS];
 
     return (
-        <SettingsCard
-            title="嵌入模型"
-            desc="向量维度不同不可比较：切换后将重建 chunks_vec 并清空全部既有切片，需要重新索引。"
-        >
+        <SettingsCard title="嵌入模型">
             <div className="flex flex-col gap-3">
                 <select
                     aria-label="嵌入模型"

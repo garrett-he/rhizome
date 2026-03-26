@@ -160,17 +160,18 @@ export function TasksPage() {
 
     return (
         <div className="flex flex-col gap-5 p-8">
-            <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-semibold text-neutral-950">任务中心</h1>
+            <div className="flex items-center justify-end">
                 <div className="flex gap-3">
                     <Button
                         type="button"
                         variant="outline"
+                        size="icon"
+                        aria-label="刷新"
+                        title="刷新"
                         disabled={loading || running}
                         onClick={() => void refresh()}
                     >
                         <RefreshCw aria-hidden className="h-4 w-4" />
-                        刷新
                     </Button>
                     <Button
                         type="button"

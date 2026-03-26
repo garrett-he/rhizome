@@ -56,9 +56,9 @@ describe("SettingsPage", () => {
     it("renders cards with values from settings", async () => {
         render(<SettingsPage />);
 
-        expect(await screen.findByText("设置")).toBeTruthy();
-        expect(screen.getByText("嵌入模型")).toBeTruthy();
-        expect(screen.getByText("LLM")).toBeTruthy();
+        expect(await screen.findByText("嵌入模型")).toBeTruthy();
+        expect(screen.getByText("大语言模型")).toBeTruthy();
+        expect(screen.getByText("提示词")).toBeTruthy();
         expect(screen.getByText("编译提示词")).toBeTruthy();
         expect(screen.getByText("问答提示词")).toBeTruthy();
         expect(screen.getByText("docs_compile")).toBeTruthy();
@@ -73,7 +73,7 @@ describe("SettingsPage", () => {
     it("saves embedding model on change", async () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
-        await screen.findByText("设置");
+        await screen.findByText("嵌入模型");
 
         await user.selectOptions(screen.getByLabelText("嵌入模型"), "BAAI/bge-small-zh-v1.5");
 
@@ -88,7 +88,7 @@ describe("SettingsPage", () => {
     it("saves LLM fields together, empty field deletes key", async () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
-        await screen.findByText("设置");
+        await screen.findByText("嵌入模型");
 
         await user.type(screen.getByLabelText("Base URL"), "https://api.example.com/v1");
         await user.click(screen.getByRole("button", { name: "保存" }));
@@ -121,7 +121,7 @@ describe("SettingsPage", () => {
         });
         const user = userEvent.setup();
         render(<SettingsPage />);
-        await screen.findByText("设置");
+        await screen.findByText("嵌入模型");
 
         const button = screen.getByRole("button", { name: "测试连接" });
         expect(button).toBeEnabled();
@@ -155,7 +155,7 @@ describe("SettingsPage", () => {
         });
         const user = userEvent.setup();
         render(<SettingsPage />);
-        await screen.findByText("设置");
+        await screen.findByText("嵌入模型");
 
         await user.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -165,7 +165,7 @@ describe("SettingsPage", () => {
     it("edits compile prompt in modal and saves to settings", async () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
-        await screen.findByText("设置");
+        await screen.findByText("嵌入模型");
 
         // 两张提示词卡片，第一张为 docs_compile
         await user.click(screen.getAllByRole("button", { name: "编辑" })[0]);
@@ -188,7 +188,7 @@ describe("SettingsPage", () => {
     it("edits answer prompt in modal and saves to settings", async () => {
         const user = userEvent.setup();
         render(<SettingsPage />);
-        await screen.findByText("设置");
+        await screen.findByText("嵌入模型");
 
         await user.click(screen.getAllByRole("button", { name: "编辑" })[1]);
         const textarea = await screen.findByLabelText("提示词内容");
