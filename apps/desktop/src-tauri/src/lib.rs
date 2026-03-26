@@ -136,6 +136,22 @@ fn get_default_prompt(name: String) -> Result<String, String> {
         .ok_or_else(|| format!("未知提示词: {name}"))
 }
 
+/// 用表单当前值测试 LLM 连接（不依赖是否已保存）。
+#[tauri::command]
+async fn test_llm_connection(base_url: String, api_key: String, model: String) -> Result<(), String> {
+    let config = llm::LlmConfig {
+        base_url: base_url.trim().to_string(),
+        api_key: api_key.trim().to_string(),
+        model: model.trim().to_string(),
+    };
+    if config.base_url.is_empty() || config.api_key.is_empty() || config.model.is_empty() {
+        return Err("请先填写 Base URL、API Key 与模型".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || llm::OpenAiClient::new(config).test_connection())
+        .await
+        .map_err(|e| format!("任务执行失败: {e}"))?
+}
+
 /// 问答事件的 Tauri 实现：转发到前端监听（payload serde_json::Value）。
 struct TauriQaEvents {
     app: tauri::AppHandle,
@@ -417,6 +433,7 @@ pub fn run() {
             get_settings,
             set_setting,
             get_default_prompt,
+            test_llm_connection,
             compile_documents,
             index_documents,
             process_documents

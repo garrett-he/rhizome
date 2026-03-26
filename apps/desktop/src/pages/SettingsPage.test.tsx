@@ -11,6 +11,21 @@ const invokeMock = vi.mocked(invoke) as unknown as Mock;
 
 const DEFAULT_PROMPT = "# docs compile default prompt with {content}";
 
+const LLM_SETTINGS = [
+    { key: "llm_base_url", value: "https://api.example.com/v1" },
+    { key: "llm_api_key", value: "sk-test" },
+    { key: "llm_model", value: "gpt-4o-mini" },
+];
+
+const EMPTY_OVERVIEW = {
+    total_documents: 0,
+    indexed_documents: 0,
+    pending_documents: 0,
+    failed_documents: 0,
+    storage_bytes: 0,
+    categories: [],
+};
+
 beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockImplementation(async (cmd: string, _args?: Record<string, unknown>) => {
@@ -86,6 +101,65 @@ describe("SettingsPage", () => {
             expect(invokeMock).toHaveBeenCalledWith("set_setting", { key: "llm_api_key", value: null });
             expect(invokeMock).toHaveBeenCalledWith("set_setting", { key: "llm_model", value: null });
         });
+    });
+
+    it("tests the LLM connection with the current form values", async () => {
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "get_settings") {
+                return LLM_SETTINGS;
+            }
+            if (cmd === "get_overview") {
+                return EMPTY_OVERVIEW;
+            }
+            if (cmd === "get_default_prompt") {
+                return DEFAULT_PROMPT;
+            }
+            if (cmd === "test_llm_connection") {
+                return null;
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        const user = userEvent.setup();
+        render(<SettingsPage />);
+        await screen.findByText("设置");
+
+        const button = screen.getByRole("button", { name: "测试连接" });
+        expect(button).toBeEnabled();
+        await user.click(button);
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("test_llm_connection", {
+                baseUrl: "https://api.example.com/v1",
+                apiKey: "sk-test",
+                model: "gpt-4o-mini",
+            });
+        });
+        expect(await screen.findByText("连接成功")).toBeTruthy();
+    });
+
+    it("shows the LLM connection error", async () => {
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "get_settings") {
+                return LLM_SETTINGS;
+            }
+            if (cmd === "get_overview") {
+                return EMPTY_OVERVIEW;
+            }
+            if (cmd === "get_default_prompt") {
+                return DEFAULT_PROMPT;
+            }
+            if (cmd === "test_llm_connection") {
+                throw "LLM 返回 401: bad key";
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        const user = userEvent.setup();
+        render(<SettingsPage />);
+        await screen.findByText("设置");
+
+        await user.click(screen.getByRole("button", { name: "测试连接" }));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("LLM 返回 401");
     });
 
     it("edits compile prompt in modal and saves to settings", async () => {

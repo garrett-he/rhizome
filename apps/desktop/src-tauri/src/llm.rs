@@ -43,6 +43,39 @@ impl OpenAiClient {
     }
 }
 
+impl OpenAiClient {
+    /// 连接测试：发送一条 max_tokens=1 的最小请求，只校验 HTTP 成功。
+    pub fn test_connection(&self) -> Result<(), String> {
+        let url = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        });
+        let response = match self
+            .http
+            .post(&url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body)
+            .send()
+        {
+            Ok(response) => response,
+            Err(e) => {
+                crate::logging::log("ERROR", &format!("LLM 连接测试失败: {url}: {e}"));
+                return Err(format!("LLM 请求失败: {e}"));
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().unwrap_or_default();
+            let message = format!("LLM 返回 {status}: {}", truncate(&text, 300));
+            crate::logging::log("ERROR", &format!("LLM 连接测试失败: {url}: {message}"));
+            return Err(message);
+        }
+        Ok(())
+    }
+}
+
 impl LlmClient for OpenAiClient {
     fn model(&self) -> &str {
         &self.config.model
@@ -508,6 +541,29 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         drop(listener);
         let error = client(format!("http://{addr}")).chat("p").unwrap_err();
+        assert!(error.contains("LLM 请求失败"), "{error}");
+    }
+
+    #[test]
+    fn test_connection_success_is_ok() {
+        let url = spawn_once("HTTP/1.1 200 OK", r#"{"choices":[{"message":{"content":"p"}}]}"#);
+        assert!(client(url).test_connection().is_ok());
+    }
+
+    #[test]
+    fn test_connection_http_error_includes_status_and_body() {
+        let url = spawn_once("HTTP/1.1 401 Unauthorized", "bad key");
+        let error = client(url).test_connection().unwrap_err();
+        assert!(error.contains("LLM 返回 401"), "{error}");
+        assert!(error.contains("bad key"), "{error}");
+    }
+
+    #[test]
+    fn test_connection_refused_is_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let error = client(format!("http://{addr}")).test_connection().unwrap_err();
         assert!(error.contains("LLM 请求失败"), "{error}");
     }
 

@@ -13,3 +13,8 @@ export async function setSetting(key: string, value: string | null): Promise<voi
 export async function getDefaultPrompt(name: string): Promise<string> {
     return invoke<string>("get_default_prompt", { name });
 }
+
+/** 用当前表单值测试 LLM 连通性，成功 resolve，失败 reject 带错误信息。 */
+export async function testLlmConnection(baseUrl: string, apiKey: string, model: string): Promise<void> {
+    await invoke("test_llm_connection", { baseUrl, apiKey, model });
+}

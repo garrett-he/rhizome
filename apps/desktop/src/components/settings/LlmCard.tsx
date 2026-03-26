@@ -2,6 +2,7 @@ import { Plug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { testLlmConnection } from "@/lib/settings";
 import { SettingsCard } from "./SettingsCard";
 
 interface LlmCardProps {
@@ -20,6 +21,8 @@ export function LlmCard({ settings, loading, onSave }: LlmCardProps) {
     const [values, setValues] = useState({ baseUrl: "", apiKey: "", model: "" });
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
     const initialized = useRef(false);
 
     useEffect(() => {
@@ -44,6 +47,19 @@ export function LlmCard({ settings, loading, onSave }: LlmCardProps) {
         setSaved(ok);
     };
 
+    const handleTest = async () => {
+        setTesting(true);
+        setTestResult(null);
+        try {
+            await testLlmConnection(values.baseUrl, values.apiKey, values.model);
+            setTestResult({ ok: true, message: "连接成功" });
+        } catch (err) {
+            setTestResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
+        } finally {
+            setTesting(false);
+        }
+    };
+
     return (
         <SettingsCard title="LLM">
             <div className="flex flex-col gap-4">
@@ -60,9 +76,10 @@ export function LlmCard({ settings, loading, onSave }: LlmCardProps) {
                                 type={field.type}
                                 value={values[field.stateKey]}
                                 disabled={loading}
-                                onChange={(event) =>
-                                    setValues((prev) => ({ ...prev, [field.stateKey]: event.target.value }))
-                                }
+                                onChange={(event) => {
+                                    setValues((prev) => ({ ...prev, [field.stateKey]: event.target.value }));
+                                    setTestResult(null);
+                                }}
                             />
                         </label>
                     ))}
@@ -71,10 +88,23 @@ export function LlmCard({ settings, loading, onSave }: LlmCardProps) {
                     <Button type="button" disabled={loading || saving} onClick={() => void handleSave()}>
                         保存
                     </Button>
-                    <Button type="button" variant="outline" disabled title="连接测试将在后续版本提供">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        disabled={loading || testing}
+                        onClick={() => void handleTest()}
+                    >
                         <Plug aria-hidden className="h-4 w-4" />
-                        测试连接
+                        {testing ? "测试中…" : "测试连接"}
                     </Button>
+                    {testResult !== null && (
+                        <span
+                            role={testResult.ok ? "status" : "alert"}
+                            className={testResult.ok ? "text-[13px] text-emerald-600" : "text-[13px] text-red-600"}
+                        >
+                            {testResult.message}
+                        </span>
+                    )}
                     {saved && <span className="text-[13px] text-neutral-500">已保存</span>}
                 </div>
             </div>
