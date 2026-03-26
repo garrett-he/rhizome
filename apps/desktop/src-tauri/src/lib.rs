@@ -218,6 +218,16 @@ fn list_messages(conversation_id: String) -> Result<Vec<qa::Message>, String> {
     qa::list_messages(Path::new(&current_vault()?), &conversation_id)
 }
 
+#[tauri::command]
+fn rename_conversation(id: String, title: String) -> Result<(), String> {
+    qa::rename_conversation(Path::new(&current_vault()?), &id, &title)
+}
+
+#[tauri::command]
+fn delete_conversation(id: String) -> Result<(), String> {
+    qa::delete_conversation(Path::new(&current_vault()?), &id)
+}
+
 /// 任务进度事件的 Tauri 实现：转发到前端监听（payload serde_json::Value）。
 struct TauriTaskEvents {
     app: tauri::AppHandle,
@@ -402,6 +412,8 @@ pub fn run() {
             qa_ask,
             list_conversations,
             list_messages,
+            rename_conversation,
+            delete_conversation,
             get_settings,
             set_setting,
             get_default_prompt,

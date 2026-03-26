@@ -1,6 +1,12 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { askQuestion, listConversations, listMessages } from "@/lib/qa";
+import {
+    askQuestion,
+    deleteConversation as deleteConversationApi,
+    listConversations,
+    listMessages,
+    renameConversation as renameConversationApi,
+} from "@/lib/qa";
 import type { ConversationSummary, Message, SourceRef } from "@/types/qa";
 
 function toMessage(err: unknown): string {
@@ -83,6 +89,37 @@ export function useQa() {
         setEntries([]);
         setError(null);
     }, [resetStreaming]);
+
+    const renameConversation = useCallback(
+        async (id: string, title: string) => {
+            try {
+                await renameConversationApi(id, title);
+                setError(null);
+                await refreshConversations();
+            } catch (err) {
+                setError(toMessage(err));
+            }
+        },
+        [refreshConversations],
+    );
+
+    const removeConversation = useCallback(
+        async (id: string) => {
+            try {
+                await deleteConversationApi(id);
+                // 删除的是当前会话时清空对话区，避免继续展示已不存在的内容
+                if (id === conversationIdRef.current) {
+                    newConversation();
+                } else {
+                    setError(null);
+                }
+                await refreshConversations();
+            } catch (err) {
+                setError(toMessage(err));
+            }
+        },
+        [refreshConversations, newConversation],
+    );
 
     useEffect(() => {
         void refreshConversations().finally(() => setLoading(false));
@@ -240,5 +277,7 @@ export function useQa() {
         ask,
         openConversation,
         newConversation,
+        renameConversation,
+        removeConversation,
     };
 }

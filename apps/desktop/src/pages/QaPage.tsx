@@ -1,12 +1,15 @@
-import { MessageCircle, SendHorizontal } from "lucide-react";
+import { Check, Ellipsis, MessageCircle, Pencil, SendHorizontal, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useNavigate } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useQa } from "@/hooks/useQa";
+import { confirmAction } from "@/lib/dialog";
 import { formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { ConversationSummary } from "@/types/qa";
 
 const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
 
@@ -59,11 +62,70 @@ function MarkdownContent({ content, streaming = false }: { content: string; stre
     );
 }
 
+function RenameConversationForm({
+    title,
+    busy,
+    onConfirm,
+    onCancel,
+}: {
+    title: string;
+    busy: boolean;
+    onConfirm: (title: string) => void;
+    onCancel: () => void;
+}) {
+    const [value, setValue] = useState(title);
+    return (
+        <form
+            className="flex items-center gap-1 rounded-lg border border-neutral-300 bg-neutral-50 px-2 py-1.5"
+            onSubmit={(event) => {
+                event.preventDefault();
+                onConfirm(value);
+            }}
+        >
+            <Input
+                aria-label="会话标题"
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                disabled={busy}
+                autoFocus
+                className="h-7 min-w-0 flex-1 text-[13px]"
+            />
+            <Button
+                type="submit"
+                variant="ghost"
+                size="sm"
+                aria-label="确认重命名"
+                disabled={busy || value.trim() === ""}
+            >
+                <Check aria-hidden className="h-3.5 w-3.5" />
+            </Button>
+            <Button type="button" variant="ghost" size="sm" aria-label="取消重命名" disabled={busy} onClick={onCancel}>
+                <X aria-hidden className="h-3.5 w-3.5" />
+            </Button>
+        </form>
+    );
+}
+
 export function QaPage() {
     const navigate = useNavigate();
-    const { conversations, conversationId, entries, loading, asking, error, ask, openConversation, newConversation } =
-        useQa();
+    const {
+        conversations,
+        conversationId,
+        entries,
+        loading,
+        asking,
+        error,
+        ask,
+        openConversation,
+        newConversation,
+        renameConversation,
+        removeConversation,
+    } = useQa();
     const [question, setQuestion] = useState("");
+    const [menuId, setMenuId] = useState<string | null>(null);
+    const [renamingId, setRenamingId] = useState<string | null>(null);
+    const [renaming, setRenaming] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // 新消息/流式追加时自动滚到底
@@ -81,6 +143,24 @@ export function QaPage() {
         }
         setQuestion("");
         void ask(trimmed);
+    };
+
+    const submitRename = (id: string, title: string) => {
+        setRenaming(true);
+        void renameConversation(id, title).then(() => {
+            setRenaming(false);
+            setRenamingId(null);
+        });
+    };
+
+    const deleteConversationItem = async (conversation: ConversationSummary) => {
+        setMenuId(null);
+        if (!(await confirmAction(`确定删除会话「${conversation.title}」吗？`))) {
+            return;
+        }
+        setDeleting(true);
+        await removeConversation(conversation.id);
+        setDeleting(false);
     };
 
     return (
@@ -195,25 +275,93 @@ export function QaPage() {
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
                     {conversations.length === 0 && <p className="text-[13px] text-neutral-500">暂无历史会话</p>}
-                    {conversations.map((conversation) => (
-                        <button
-                            key={conversation.id}
-                            type="button"
-                            onClick={() => void openConversation(conversation.id)}
-                            className={cn(
-                                "flex w-full flex-col gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                                conversation.id === conversationId
-                                    ? "border-neutral-300 bg-neutral-100"
-                                    : "border-neutral-200 bg-neutral-50 hover:bg-neutral-100",
+                    {conversations.map((conversation, index) => (
+                        <div key={conversation.id} className="group relative">
+                            {renamingId === conversation.id ? (
+                                <RenameConversationForm
+                                    title={conversation.title}
+                                    busy={renaming}
+                                    onConfirm={(title) => submitRename(conversation.id, title)}
+                                    onCancel={() => setRenamingId(null)}
+                                />
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => void openConversation(conversation.id)}
+                                        className={cn(
+                                            "flex w-full flex-col gap-0.5 rounded-lg border py-2.5 pl-3 pr-9 text-left transition-colors",
+                                            conversation.id === conversationId
+                                                ? "border-neutral-300 bg-neutral-100"
+                                                : "border-neutral-200 bg-neutral-50 hover:bg-neutral-100",
+                                        )}
+                                    >
+                                        <span className="truncate text-[13px] font-medium text-neutral-950">
+                                            {conversation.title}
+                                        </span>
+                                        <span className="text-xs text-neutral-500">
+                                            {formatRelativeTime(conversation.updated_at)}
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        aria-label="会话操作"
+                                        aria-haspopup="menu"
+                                        aria-expanded={menuId === conversation.id}
+                                        disabled={deleting}
+                                        onClick={() => setMenuId(menuId === conversation.id ? null : conversation.id)}
+                                        className={cn(
+                                            "absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-neutral-200 hover:text-neutral-950 focus-visible:opacity-100 group-hover:opacity-100",
+                                            menuId === conversation.id && "opacity-100",
+                                        )}
+                                    >
+                                        <Ellipsis aria-hidden className="h-4 w-4" />
+                                    </button>
+                                    {menuId === conversation.id && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                aria-label="关闭菜单"
+                                                className="fixed inset-0 z-10 cursor-default"
+                                                onClick={() => setMenuId(null)}
+                                            />
+                                            <div
+                                                role="menu"
+                                                className={cn(
+                                                    "absolute right-0 z-20 flex w-28 flex-col rounded-md border border-neutral-200 bg-white p-1 shadow-md",
+                                                    // 末项向下弹出会被滚动容器裁切，改为向上展开
+                                                    index === conversations.length - 1
+                                                        ? "bottom-full mb-1"
+                                                        : "top-full mt-1",
+                                                )}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    role="menuitem"
+                                                    onClick={() => {
+                                                        setMenuId(null);
+                                                        setRenamingId(conversation.id);
+                                                    }}
+                                                    className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-neutral-950 hover:bg-neutral-100"
+                                                >
+                                                    <Pencil aria-hidden className="h-3.5 w-3.5" />
+                                                    重命名
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    role="menuitem"
+                                                    onClick={() => void deleteConversationItem(conversation)}
+                                                    className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-red-600 hover:bg-red-50"
+                                                >
+                                                    <Trash2 aria-hidden className="h-3.5 w-3.5" />
+                                                    删除
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </>
                             )}
-                        >
-                            <span className="truncate text-[13px] font-medium text-neutral-950">
-                                {conversation.title}
-                            </span>
-                            <span className="text-xs text-neutral-500">
-                                {formatRelativeTime(conversation.updated_at)}
-                            </span>
-                        </button>
+                        </div>
                     ))}
                 </div>
             </div>

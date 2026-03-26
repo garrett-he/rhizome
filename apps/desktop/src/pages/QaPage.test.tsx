@@ -1,14 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { confirmAction } from "@/lib/dialog";
 import type { ConversationSummary } from "@/types/qa";
 import { QaPage } from "./QaPage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/lib/dialog", () => ({ confirmAction: vi.fn() }));
 
 // 受控 listen：同一事件可注册多个监听（用于验证重复绑定），测试通过 emit 触发回调
 type Handler = (event: { payload: Record<string, unknown> }) => void;
@@ -31,6 +33,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const invokeMock = vi.mocked(invoke) as unknown as Mock;
+const confirmMock = vi.mocked(confirmAction);
 
 function emit(event: string, payload: Record<string, unknown>) {
     for (const handler of eventHandlers.get(event) ?? []) {
@@ -61,6 +64,8 @@ function renderPage() {
 beforeEach(() => {
     invokeMock.mockReset();
     eventHandlers.clear();
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
     invokeMock.mockImplementation(async (cmd: string) => {
         if (cmd === "list_conversations") {
             return [CONVERSATION];
@@ -278,6 +283,89 @@ describe("QaPage", () => {
         expect(await screen.findByText("之前的问题")).toBeTruthy();
         expect(screen.getByText("之前的回答")).toBeTruthy();
         expect(screen.queryByText("输入问题，从知识库中寻找答案")).toBeNull();
+    });
+
+    it("renames a conversation from the item menu", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            if (cmd === "rename_conversation") {
+                return null;
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("服务拆分实践");
+
+        await user.click(screen.getByRole("button", { name: "会话操作" }));
+        await user.click(screen.getByRole("menuitem", { name: /重命名/ }));
+
+        const input = screen.getByLabelText("会话标题");
+        await user.clear(input);
+        await user.type(input, "新标题");
+        await user.click(screen.getByRole("button", { name: "确认重命名" }));
+
+        await waitFor(() => {
+            expect(invokeMock).toHaveBeenCalledWith("rename_conversation", { id: "conv1", title: "新标题" });
+        });
+        expect(screen.queryByLabelText("会话标题")).toBeNull();
+    });
+
+    it("deletes the current conversation from the item menu after confirmation", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            if (cmd === "list_messages") {
+                return [
+                    { id: 1, role: "user", content: "之前的问题", sources: [], created_at: "2026-10-22T01:00:00Z" },
+                ];
+            }
+            if (cmd === "delete_conversation") {
+                return null;
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("服务拆分实践");
+
+        await user.click(screen.getByText("服务拆分实践"));
+        await screen.findByText("之前的问题");
+
+        await user.click(screen.getByRole("button", { name: "会话操作" }));
+        await user.click(screen.getByRole("menuitem", { name: /删除/ }));
+
+        await waitFor(() => {
+            expect(confirmMock).toHaveBeenCalled();
+            expect(invokeMock).toHaveBeenCalledWith("delete_conversation", { id: "conv1" });
+        });
+        // 删除的是当前会话，对话区清空
+        expect(await screen.findByText("输入问题，从知识库中寻找答案")).toBeTruthy();
+        expect(screen.queryByText("之前的问题")).toBeNull();
+    });
+
+    it("keeps the conversation when deletion is cancelled", async () => {
+        const user = userEvent.setup();
+        confirmMock.mockResolvedValue(false);
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("服务拆分实践");
+
+        await user.click(screen.getByRole("button", { name: "会话操作" }));
+        await user.click(screen.getByRole("menuitem", { name: /删除/ }));
+
+        await waitFor(() => {
+            expect(confirmMock).toHaveBeenCalled();
+        });
+        expect(invokeMock).not.toHaveBeenCalledWith("delete_conversation", expect.anything());
     });
 
     it("starts a new conversation clearing the view", async () => {

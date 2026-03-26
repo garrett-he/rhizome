@@ -205,6 +205,41 @@ pub fn list_messages(vault: &Path, conversation_id: &str) -> Result<Vec<Message>
     Ok(messages)
 }
 
+/// 重命名会话（标题去首尾空白，空标题拒绝）；会话不存在返回 Err。
+pub fn rename_conversation(vault: &Path, id: &str, title: &str) -> Result<(), String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("会话标题不能为空".to_string());
+    }
+    let conn = open_conn(vault)?;
+    let updated = conn
+        .execute(
+            "UPDATE conversations SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )
+        .map_err(|e| format!("更新会话失败: {e}"))?;
+    if updated == 0 {
+        return Err(format!("会话不存在: {id}"));
+    }
+    Ok(())
+}
+
+/// 删除会话及其全部消息（同一事务）；会话不存在返回 Err。
+pub fn delete_conversation(vault: &Path, id: &str) -> Result<(), String> {
+    let mut conn = open_conn(vault)?;
+    let tx = conn.transaction().map_err(|e| format!("开启事务失败: {e}"))?;
+    tx.execute("DELETE FROM conversation_messages WHERE conversation_id = ?1", [id])
+        .map_err(|e| format!("删除消息失败: {e}"))?;
+    let deleted = tx
+        .execute("DELETE FROM conversations WHERE id = ?1", [id])
+        .map_err(|e| format!("删除会话失败: {e}"))?;
+    if deleted == 0 {
+        return Err(format!("会话不存在: {id}"));
+    }
+    tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
+    Ok(())
+}
+
 /// 解析会话 id：None 新建（标题取首问前 20 字）；传入但不存在则 Err。
 fn resolve_conversation(conn: &Connection, conversation_id: Option<&str>, question: &str) -> Result<String, String> {
     if let Some(id) = conversation_id {
@@ -571,5 +606,65 @@ mod tests {
     fn test_list_messages_unknown_conversation_is_error() {
         let tmp = setup();
         assert!(list_messages(tmp.path(), "nope").unwrap_err().contains("会话不存在"));
+    }
+
+    fn create_conversation(tmp: &TempDir, question: &str) -> String {
+        qa_ask_service(
+            tmp.path(),
+            &CapturedEvents::default(),
+            question,
+            None,
+            &FakeStreamClient::new(&["回答"]),
+            None,
+        )
+        .unwrap()
+        .conversation_id
+    }
+
+    #[test]
+    fn test_rename_conversation_trims_and_updates_title() {
+        let tmp = setup();
+        let id = create_conversation(&tmp, "原问题");
+
+        rename_conversation(tmp.path(), &id, "  新标题  ").unwrap();
+
+        let conversations = list_conversations(tmp.path()).unwrap();
+        assert_eq!(conversations[0].title, "新标题");
+    }
+
+    #[test]
+    fn test_rename_conversation_rejects_empty_title() {
+        let tmp = setup();
+        let id = create_conversation(&tmp, "原问题");
+
+        let error = rename_conversation(tmp.path(), &id, "   ").unwrap_err();
+
+        assert!(error.contains("不能为空"));
+        assert_eq!(list_conversations(tmp.path()).unwrap()[0].title, "原问题");
+    }
+
+    #[test]
+    fn test_rename_unknown_conversation_is_error() {
+        let tmp = setup();
+        let error = rename_conversation(tmp.path(), "nope", "新标题").unwrap_err();
+        assert!(error.contains("会话不存在"));
+    }
+
+    #[test]
+    fn test_delete_conversation_removes_messages() {
+        let tmp = setup();
+        let id = create_conversation(&tmp, "要删除的会话");
+
+        delete_conversation(tmp.path(), &id).unwrap();
+
+        assert!(list_conversations(tmp.path()).unwrap().is_empty());
+        assert!(list_messages(tmp.path(), &id).unwrap_err().contains("会话不存在"));
+    }
+
+    #[test]
+    fn test_delete_unknown_conversation_is_error() {
+        let tmp = setup();
+        let error = delete_conversation(tmp.path(), "nope").unwrap_err();
+        assert!(error.contains("会话不存在"));
     }
 }
