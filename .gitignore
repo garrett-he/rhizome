@@ -3,17 +3,9 @@ node_modules/
 tsconfig.tsbuildinfo
 coverage/
 
-**/src-tauri/gen/schemas/
-**/src-tauri/target/
-**/src-tauri/build_rs_cov.profraw
-
-# python (extractor)
-.venv/
-__pycache__/
-*.egg-info/
-.ruff_cache/
-.pyrefly/
-apps/extractor/build/
+src-tauri/gen/schemas/
+src-tauri/target/
+src-tauri/build_rs_cov.profraw
 
 # os
 .DS_Store

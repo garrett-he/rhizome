@@ -102,12 +102,10 @@ fn bundled_any2txt_in(bases: &[PathBuf]) -> Option<PathBuf> {
 }
 
 /// 开发模式 any2txt 仓库根：与本仓库（rhizome）同级。
-/// CARGO_MANIFEST_DIR = <repo>/apps/desktop/src-tauri，向上四级到仓库父目录。
+/// CARGO_MANIFEST_DIR = <repo>/src-tauri，向上两级到仓库父目录。
 fn any2txt_project_dir() -> Result<PathBuf, String> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
         .and_then(Path::parent)
         .map(|projects| projects.join("any2txt"))
         .ok_or_else(|| "无法定位 any2txt 仓库（应与 rhizome 位于同一父目录）".to_string())

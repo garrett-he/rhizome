@@ -9,9 +9,9 @@ A desktop application to create and manage personal knowledge base.
 
 ```
 rhizome/
-├── apps/
-│   └── desktop/        # Tauri 桌面应用（React 前端 + Rust 后端）
-├── deprecated/         # 旧版 CLI 实现（仅作移植参考，待删除）
+├── src/            # React 前端
+├── src-tauri/      # Rust 后端（Tauri）
+├── scripts/        # 构建与分发辅助脚本
 └── docs/
 ```
 
