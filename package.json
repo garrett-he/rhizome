@@ -86,6 +86,6 @@
         ]
     },
     "simple-git-hooks": {
-        "pre-commit": "npx lint-staged"
+        "pre-commit": "node node_modules/lint-staged/bin/lint-staged.js"
     }
 }
