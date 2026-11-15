@@ -5,7 +5,7 @@
     "identifier": "com.github.garrett-he.rhizome",
     "build": {
         "beforeDevCommand": "pnpm dev",
-        "devUrl": "http://localhost:1720",
+        "devUrl": "http://localhost:1722",
         "beforeBuildCommand": "pnpm build",
         "frontendDist": "../dist"
     },
