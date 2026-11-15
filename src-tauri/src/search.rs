@@ -2,7 +2,8 @@
 //! mcp/knowledge_base.py 的 search 实现）。
 //!
 //! 向量腿失败（模型未就绪/维度不匹配/SQL 异常）时降级仅 FTS 并写 app.log，
-//! 保证检索始终可用。相关度为批次内归一化值（top 恒 1.00）。
+//! 保证检索始终可用；结果里的 `vector_used` 如实标记向量腿是否生效，前端
+//! 据此展示降级状态。相关度为批次内归一化值（top 恒 1.00）。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,6 +20,14 @@ pub const RRF_K: f64 = 60.0;
 /// trigram 分词器无法匹配少于 3 字符的查询。
 pub const MIN_FTS_QUERY_CHARS: usize = 3;
 const SNIPPET_MAX_CHARS: usize = 200;
+
+/// 一次检索的结果：命中列表 + 向量腿是否实际参与融合。
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct SearchOutcome {
+    pub hits: Vec<SearchHit>,
+    /// false 表示本次仅使用全文检索（向量腿不可用），结果可能不完整。
+    pub vector_used: bool,
+}
 
 /// 单条检索结果。
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -40,30 +49,39 @@ pub struct SearchHit {
     pub relevance: f64,
 }
 
-/// 混合检索入口：空查询返回空列表；无索引库返回空列表（而非报错）。
+/// 混合检索入口：空查询返回空结果；无索引库返回空结果（而非报错）。
 #[allow(clippy::too_many_lines)]
 pub fn search_documents(
     vault: &Path,
     query: &str,
     limit: usize,
     model: Option<&dyn EmbeddingModel>,
-) -> Result<Vec<SearchHit>, String> {
+) -> Result<SearchOutcome, String> {
     let query = query.trim();
     if query.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SearchOutcome {
+            hits: Vec::new(),
+            vector_used: false,
+        });
     }
     let limit = limit.clamp(1, 50);
 
     let conn = index_db::open(vault)?;
     documents::ensure_table(&conn)?;
     if !table_exists(&conn, "chunks") {
-        return Ok(Vec::new());
+        return Ok(SearchOutcome {
+            hits: Vec::new(),
+            vector_used: false,
+        });
     }
 
-    let vector_ids = vector_leg(&conn, query, limit, model);
+    let (vector_ids, vector_used) = vector_leg(&conn, query, limit, model);
     let fts_ids = fts_leg(&conn, query, limit);
     if vector_ids.is_empty() && fts_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SearchOutcome {
+            hits: Vec::new(),
+            vector_used,
+        });
     }
 
     // RRF 融合：score += 1 / (RRF_K + rank)，rank 从 1 起
@@ -88,28 +106,29 @@ pub fn search_documents(
             hits.push(hit);
         }
     }
-    Ok(hits)
+    Ok(SearchOutcome { hits, vector_used })
 }
 
-/// 向量腿：查询文本本地 embedding 后 KNN；任何失败降级为空（log 留证据）。
-fn vector_leg(conn: &Connection, query: &str, limit: usize, model: Option<&dyn EmbeddingModel>) -> Vec<i64> {
+/// 向量腿：查询文本本地 embedding 后 KNN；返回（chunk id, 向量腿是否生效）。
+/// 任何失败降级为空并写 log，第二个元素为 false。
+fn vector_leg(conn: &Connection, query: &str, limit: usize, model: Option<&dyn EmbeddingModel>) -> (Vec<i64>, bool) {
     let Some(model) = model else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     if !table_exists(conn, "chunks_vec") {
         crate::logging::log("INFO", "向量腿跳过：chunks_vec 未建立（尚未索引）");
-        return Vec::new();
+        return (Vec::new(), false);
     }
     let stored = match index_db::stored_dimension(conn) {
         Ok(stored) => stored,
         Err(error) => {
             crate::logging::log("ERROR", &format!("向量腿跳过：读取索引维度失败: {error}"));
-            return Vec::new();
+            return (Vec::new(), false);
         }
     };
     if stored.is_none() {
         crate::logging::log("INFO", "向量腿跳过：索引未记录嵌入维度");
-        return Vec::new();
+        return (Vec::new(), false);
     }
     if stored != Some(model.dimension()) {
         crate::logging::log(
@@ -120,23 +139,23 @@ fn vector_leg(conn: &Connection, query: &str, limit: usize, model: Option<&dyn E
                 model.dimension()
             ),
         );
-        return Vec::new();
+        return (Vec::new(), false);
     }
     let vector = match model.embed(&[query.to_string()]) {
         Ok(mut vectors) if vectors.len() == 1 => match serde_json::to_string(&vectors.remove(0)) {
             Ok(vector) => vector,
             Err(error) => {
                 crate::logging::log("ERROR", &format!("向量腿跳过：查询向量序列化失败: {error}"));
-                return Vec::new();
+                return (Vec::new(), false);
             }
         },
         Ok(_) => {
             crate::logging::log("ERROR", "向量腿跳过：embedding 返回数量异常");
-            return Vec::new();
+            return (Vec::new(), false);
         }
         Err(error) => {
             crate::logging::log("ERROR", &format!("向量腿跳过：查询向量化失败: {error}"));
-            return Vec::new();
+            return (Vec::new(), false);
         }
     };
     let mut stmt =
@@ -144,15 +163,15 @@ fn vector_leg(conn: &Connection, query: &str, limit: usize, model: Option<&dyn E
             Ok(stmt) => stmt,
             Err(error) => {
                 crate::logging::log("ERROR", &format!("向量腿跳过：KNN prepare 失败: {error}"));
-                return Vec::new();
+                return (Vec::new(), false);
             }
         };
     let rows = stmt.query_map(params![vector, limit as i64], |row| row.get::<_, i64>(0));
     match rows {
-        Ok(rows) => rows.filter_map(Result::ok).collect(),
+        Ok(rows) => (rows.filter_map(Result::ok).collect(), true),
         Err(error) => {
             crate::logging::log("ERROR", &format!("向量腿跳过：KNN 查询失败: {error}"));
-            Vec::new()
+            (Vec::new(), false)
         }
     }
 }
@@ -355,15 +374,18 @@ mod tests {
     #[test]
     fn test_empty_query_returns_empty() {
         let tmp = setup();
-        assert!(search_documents(tmp.path(), "", 10, None).unwrap().is_empty());
-        assert!(search_documents(tmp.path(), "   ", 10, None).unwrap().is_empty());
+        let empty = search_documents(tmp.path(), "", 10, None).unwrap();
+        assert!(empty.hits.is_empty());
+        assert!(!empty.vector_used);
+        assert!(search_documents(tmp.path(), "   ", 10, None).unwrap().hits.is_empty());
     }
 
     #[test]
     fn test_search_without_index_is_empty_not_error() {
         let tmp = setup();
-        let hits = search_documents(tmp.path(), "服务拆分", 10, None).unwrap();
-        assert!(hits.is_empty());
+        let outcome = search_documents(tmp.path(), "服务拆分", 10, None).unwrap();
+        assert!(outcome.hits.is_empty());
+        assert!(!outcome.vector_used);
     }
 
     #[test]
@@ -371,7 +393,8 @@ mod tests {
         let tmp = setup();
         index_fixture(&tmp);
 
-        let hits = search_documents(tmp.path(), "业务边界", 10, None).unwrap();
+        let outcome = search_documents(tmp.path(), "业务边界", 10, None).unwrap();
+        let hits = outcome.hits;
         // 只有文档 a 的首个 chunk 含「业务边界」
         assert_eq!(hits.len(), 1);
         // top 相关度恒为 1.00
@@ -391,20 +414,24 @@ mod tests {
         let model = FakeEmbedding { dimension: 4 };
         let with_vector = search_documents(tmp.path(), "单体应用逐步演进为微服务", 10, Some(&model)).unwrap();
         let fts_only = search_documents(tmp.path(), "单体应用逐步演进为微服务", 10, None).unwrap();
-        assert!(!with_vector.is_empty());
-        assert_eq!(with_vector[0].chunk_label, "单体到微服务");
+        assert!(with_vector.vector_used);
+        assert!(!fts_only.vector_used);
+        assert!(!with_vector.hits.is_empty());
+        assert_eq!(with_vector.hits[0].chunk_label, "单体到微服务");
         // 混合腿的 top 分数应 >= 仅 FTS 的 top（双腿命中加分）
-        assert!(with_vector[0].relevance >= fts_only[0].relevance);
+        assert!(with_vector.hits[0].relevance >= fts_only.hits[0].relevance);
     }
 
+    /// 回归：embedding 失败时必须标记 vector_used=false，结果集不能伪装成健康的混合检索。
     #[test]
     fn test_degrades_to_fts_when_model_fails() {
         let tmp = setup();
         index_fixture(&tmp);
         let failing = FailingEmbedding;
-        let hits = search_documents(tmp.path(), "业务边界", 10, Some(&failing)).unwrap();
-        assert!(!hits.is_empty());
-        assert!((hits[0].relevance - 1.0).abs() < 1e-9);
+        let outcome = search_documents(tmp.path(), "业务边界", 10, Some(&failing)).unwrap();
+        assert!(!outcome.vector_used, "向量腿失败后必须显式标记降级");
+        assert!(!outcome.hits.is_empty());
+        assert!((outcome.hits[0].relevance - 1.0).abs() < 1e-9);
     }
 
     #[test]
@@ -413,8 +440,9 @@ mod tests {
         index_fixture(&tmp);
         // 索引为 4 维，用 2 维模型查询 → 向量腿降级，FTS 出结果
         let small = FakeEmbedding { dimension: 2 };
-        let hits = search_documents(tmp.path(), "业务边界", 10, Some(&small)).unwrap();
-        assert_eq!(hits.len(), 1);
+        let outcome = search_documents(tmp.path(), "业务边界", 10, Some(&small)).unwrap();
+        assert!(!outcome.vector_used);
+        assert_eq!(outcome.hits.len(), 1);
     }
 
     #[test]
@@ -423,9 +451,9 @@ mod tests {
         index_fixture(&tmp);
         // 2 字符查询 < trigram 最小长度：仅向量腿
         let model = FakeEmbedding { dimension: 4 };
-        let hits = search_documents(tmp.path(), "拆分", 10, Some(&model)).unwrap();
+        let outcome = search_documents(tmp.path(), "拆分", 10, Some(&model)).unwrap();
         // "拆分" 两字无法被 trigram FTS 匹配，但向量腿可返回 KNN 结果
-        let _ = hits;
+        assert!(outcome.vector_used);
         // 关键是不报错
     }
 
@@ -433,10 +461,9 @@ mod tests {
     fn test_limit_clamped_and_results_truncated() {
         let tmp = setup();
         index_fixture(&tmp);
-        let hits = search_documents(tmp.path(), "的", 10, None).unwrap();
+        let hits = search_documents(tmp.path(), "的", 10, None).unwrap().hits;
         assert!(hits.len() <= 10);
-        let _ = hits;
-        let empty = search_documents(tmp.path(), "业务边界", 0, None).unwrap();
+        let empty = search_documents(tmp.path(), "业务边界", 0, None).unwrap().hits;
         assert!(empty.is_empty() || empty.len() == 1);
     }
 
@@ -448,7 +475,7 @@ mod tests {
         let model = FakeEmbedding { dimension: 4 };
         indexer::index_documents(tmp.path(), std::slice::from_ref(&"a".to_string()), &model, "fake").unwrap();
 
-        let hits = search_documents(tmp.path(), "超长", 10, Some(&model)).unwrap();
+        let hits = search_documents(tmp.path(), "超长", 10, Some(&model)).unwrap().hits;
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.chars().count() <= SNIPPET_MAX_CHARS + 2);
         assert!(hits[0].snippet.ends_with("……"));

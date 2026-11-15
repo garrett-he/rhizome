@@ -74,7 +74,7 @@ beforeEach(() => {
             return [];
         }
         if (cmd === "qa_ask") {
-            return { conversation_id: "conv1", sources: [] };
+            return { conversation_id: "conv1", sources: [], vector_used: true };
         }
         throw new Error(`unexpected command: ${cmd}`);
     });
@@ -103,7 +103,7 @@ describe("QaPage", () => {
                     message_id: 7,
                     sources: [{ chunk_id: 3, document_id: "doc1", title: "微服务架构实践", chunk_index: 2 }],
                 });
-                return { conversation_id: "conv1", sources: [] };
+                return { conversation_id: "conv1", sources: [], vector_used: true };
             }
             if (cmd === "list_conversations") {
                 return [CONVERSATION];
@@ -125,10 +125,42 @@ describe("QaPage", () => {
         expect(await screen.findByText(/服务拆分要注意业务边界。/)).toBeTruthy();
         // 引用来源 chip
         expect(screen.getByText(/微服务架构实践/)).toBeTruthy();
+        expect(screen.queryByText(/仅使用全文检索/)).toBeNull();
         expect(invokeMock).toHaveBeenCalledWith("qa_ask", {
             question: "服务拆分要注意什么？",
             conversationId: undefined,
         });
+    });
+
+    it("marks the answer as degraded when the vector leg was skipped", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockImplementation(async (cmd: string) => {
+            if (cmd === "qa_ask") {
+                emit("qa-start", { conversation_id: "conv1" });
+                emit("qa-delta", { conversation_id: "conv1", text: "仅据关键词回答。" });
+                emit("qa-done", {
+                    conversation_id: "conv1",
+                    message_id: 7,
+                    sources: [{ chunk_id: 3, document_id: "doc1", title: "微服务架构实践", chunk_index: 2 }],
+                    vector_used: false,
+                });
+                return { conversation_id: "conv1", sources: [], vector_used: false };
+            }
+            if (cmd === "list_conversations") {
+                return [CONVERSATION];
+            }
+            if (cmd === "list_messages") {
+                return [];
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+        renderPage();
+        await screen.findByText("输入问题，从知识库中寻找答案");
+
+        await user.type(screen.getByLabelText("问题"), "业务边界");
+        await user.click(screen.getByRole("button", { name: "发送" }));
+
+        expect(await screen.findByText("本次回答仅使用全文检索：向量检索不可用，引用可能不完整。")).toBeTruthy();
     });
 
     it("renders the assistant reply as markdown", async () => {
@@ -138,7 +170,7 @@ describe("QaPage", () => {
                 emit("qa-start", { conversation_id: "conv1" });
                 emit("qa-delta", { conversation_id: "conv1", text: "**要点**：\n\n- 第一项\n- 第二项\n\n`code`" });
                 emit("qa-done", { conversation_id: "conv1", message_id: 7, sources: [] });
-                return { conversation_id: "conv1", sources: [] };
+                return { conversation_id: "conv1", sources: [], vector_used: true };
             }
             if (cmd === "list_conversations") {
                 return [CONVERSATION];
@@ -167,7 +199,7 @@ describe("QaPage", () => {
                 emit("qa-delta", { conversation_id: "conv1", text: "服务拆分要" });
                 emit("qa-delta", { conversation_id: "conv1", text: "注意业务边界。" });
                 emit("qa-done", { conversation_id: "conv1", message_id: 7, sources: [] });
-                return { conversation_id: "conv1", sources: [] };
+                return { conversation_id: "conv1", sources: [], vector_used: true };
             }
             if (cmd === "list_conversations") {
                 return [CONVERSATION];
@@ -437,7 +469,7 @@ describe("QaPage", () => {
         invokeMock.mockImplementation(async (cmd: string) => {
             if (cmd === "qa_ask") {
                 // 不推送任何事件直接 resolve：命令 resolve 时仍在流式等待、会话 id 仍为 null
-                return { conversation_id: "conv-new", sources: [] };
+                return { conversation_id: "conv-new", sources: [], vector_used: true };
             }
             if (cmd === "list_conversations") {
                 return [CONVERSATION];

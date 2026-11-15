@@ -178,10 +178,10 @@ impl qa::QaEvents for TauriQaEvents {
         );
     }
 
-    fn done(&self, conversation_id: &str, sources: &[qa::SourceRef], message_id: i64) {
+    fn done(&self, conversation_id: &str, sources: &[qa::SourceRef], message_id: i64, vector_used: bool) {
         self.emit(
             "qa-done",
-            serde_json::json!({ "conversation_id": conversation_id, "sources": sources, "message_id": message_id }),
+            serde_json::json!({ "conversation_id": conversation_id, "sources": sources, "message_id": message_id, "vector_used": vector_used }),
         );
     }
 
@@ -304,9 +304,10 @@ fn list_jobs() -> Result<Vec<jobs::JobRecord>, String> {
     jobs::list_jobs(Path::new(&current_vault()?), 10)
 }
 
-/// 混合检索（向量 KNN + FTS trigram RRF 融合）；向量腿失败降级仅 FTS。
+/// 混合检索（向量 KNN + FTS trigram RRF 融合）；向量腿失败降级仅 FTS，
+/// 结果中的 vector_used 标记本次是否真正用上向量腿。
 #[tauri::command]
-async fn search_documents(query: String, limit: Option<u32>) -> Result<Vec<search::SearchHit>, String> {
+async fn search_documents(query: String, limit: Option<u32>) -> Result<search::SearchOutcome, String> {
     let limit = limit.unwrap_or(10).clamp(1, 50) as usize;
     let vault = current_vault()?;
     let result = tauri::async_runtime::spawn_blocking(move || {

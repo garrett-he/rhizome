@@ -44,7 +44,7 @@ function renderPage() {
 
 beforeEach(() => {
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue([]);
+    invokeMock.mockResolvedValue({ hits: [], vector_used: true });
 });
 
 describe("SearchPage", () => {
@@ -65,20 +65,23 @@ describe("SearchPage", () => {
 
     it("renders results after searching", async () => {
         const user = userEvent.setup();
-        invokeMock.mockResolvedValue([
-            hit(),
-            hit({
-                chunk_id: 2,
-                document_id: "doc2",
-                document_title: "架构演进之路",
-                chunk_index: 3,
-                chunk_label: "单体到微服务",
-                relevance: 0.85,
-                tags: ["工作"],
-                snippet: "单体应用逐步演进为微服务……",
-                created_at: "2026-10-12T01:00:00Z",
-            }),
-        ]);
+        invokeMock.mockResolvedValue({
+            hits: [
+                hit(),
+                hit({
+                    chunk_id: 2,
+                    document_id: "doc2",
+                    document_title: "架构演进之路",
+                    chunk_index: 3,
+                    chunk_label: "单体到微服务",
+                    relevance: 0.85,
+                    tags: ["工作"],
+                    snippet: "单体应用逐步演进为微服务……",
+                    created_at: "2026-10-12T01:00:00Z",
+                }),
+            ],
+            vector_used: true,
+        });
         renderPage();
 
         await user.type(screen.getByRole("searchbox", { name: "搜索关键词" }), "服务拆分 业务边界");
@@ -92,7 +95,20 @@ describe("SearchPage", () => {
         expect(screen.getByText(/首先要识别业务边界/)).toBeTruthy();
         expect(screen.getByText(/技术 · 10-20 · chunk 02/)).toBeTruthy();
         expect(screen.getByText(/共 2 条结果/)).toBeTruthy();
+        expect(screen.queryByRole("status")).toBeNull();
         expect(invokeMock).toHaveBeenCalledWith("search_documents", { query: "服务拆分 业务边界", limit: undefined });
+    });
+
+    it("marks results as degraded when the vector leg was skipped", async () => {
+        const user = userEvent.setup();
+        invokeMock.mockResolvedValue({ hits: [hit()], vector_used: false });
+        renderPage();
+
+        await user.type(screen.getByRole("searchbox", { name: "搜索关键词" }), "业务边界");
+        await user.click(screen.getByRole("button", { name: "搜索" }));
+
+        expect(await screen.findByText("微服务架构实践")).toBeTruthy();
+        expect(screen.getByRole("status")).toHaveTextContent("本次仅使用全文检索");
     });
 
     it("shows not-found state when no hits", async () => {
@@ -107,7 +123,7 @@ describe("SearchPage", () => {
 
     it("navigates to detail page with chunk param on expand", async () => {
         const user = userEvent.setup();
-        invokeMock.mockResolvedValue([hit()]);
+        invokeMock.mockResolvedValue({ hits: [hit()], vector_used: true });
         renderPage();
 
         await user.type(screen.getByRole("searchbox", { name: "搜索关键词" }), "服务拆分");

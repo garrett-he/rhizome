@@ -36,6 +36,7 @@ interface QaEventPayload {
     sources?: SourceRef[];
     message_id?: number;
     message?: string;
+    vector_used?: boolean;
 }
 
 export function useQa() {
@@ -174,6 +175,7 @@ export function useQa() {
                                 role: "assistant",
                                 content,
                                 sources: event.payload.sources ?? [],
+                                vector_used: event.payload.vector_used,
                                 created_at: new Date().toISOString(),
                             },
                         });

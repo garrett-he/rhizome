@@ -39,6 +39,7 @@ export function SearchPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [hits, setHits] = useState<SearchHit[]>([]);
+    const [vectorUsed, setVectorUsed] = useState(true);
 
     const runSearch = async () => {
         const trimmed = query.trim();
@@ -50,7 +51,9 @@ export function SearchPage() {
         setLoading(true);
         setSearched(true);
         try {
-            setHits(await searchDocuments(trimmed));
+            const outcome = await searchDocuments(trimmed);
+            setHits(outcome.hits);
+            setVectorUsed(outcome.vector_used);
         } catch (err) {
             setError(toMessage(err));
         } finally {
@@ -102,6 +105,15 @@ export function SearchPage() {
 
             {searched && !error && !loading && hits.length === 0 && (
                 <p className="py-16 text-center text-[13px] text-neutral-500">未找到相关内容</p>
+            )}
+
+            {searched && !error && !loading && hits.length > 0 && !vectorUsed && (
+                <div
+                    role="status"
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-5 text-amber-800"
+                >
+                    本次仅使用全文检索：向量检索不可用，结果可能不完整。
+                </div>
             )}
 
             <div className="flex flex-col gap-3">

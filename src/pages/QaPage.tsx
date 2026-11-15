@@ -209,6 +209,11 @@ export function QaPage() {
                                                         </button>
                                                     ))}
                                                 </div>
+                                                {entry.message.vector_used === false && (
+                                                    <span role="status" className="text-xs text-amber-700">
+                                                        本次回答仅使用全文检索：向量检索不可用，引用可能不完整。
+                                                    </span>
+                                                )}
                                             </div>
                                         )}
                                     </div>

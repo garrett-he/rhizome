@@ -86,3 +86,9 @@ export interface SearchHit {
     created_at: string;
     relevance: number;
 }
+
+export interface SearchOutcome {
+    hits: SearchHit[];
+    /** 本次检索是否用上向量腿；false = 仅全文检索，结果可能不完整 */
+    vector_used: boolean;
+}

@@ -8,7 +8,7 @@ import type {
     DocumentSummary,
     IndexOutcome,
     ProcessSummary,
-    SearchHit,
+    SearchOutcome,
 } from "@/types/document";
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
@@ -48,8 +48,8 @@ export async function processDocuments(): Promise<ProcessSummary> {
     return invoke<ProcessSummary>("process_documents");
 }
 
-export async function searchDocuments(query: string, limit?: number): Promise<SearchHit[]> {
-    return invoke<SearchHit[]>("search_documents", { query, limit });
+export async function searchDocuments(query: string, limit?: number): Promise<SearchOutcome> {
+    return invoke<SearchOutcome>("search_documents", { query, limit });
 }
 
 export async function pickFiles(): Promise<string[]> {

@@ -3,7 +3,8 @@
 //! 流程：插入 user 消息 → 检索 top-5（复用 search.rs，向量腿降级语义自动继承）
 //! → docs_answer 提示词组装（settings KV 覆盖 → 内置默认）→ `chat_stream`
 //! 逐 delta 经 `QaEvents` 回调推送 → 回答与引用落库。事件由命令层的
-//! AppHandle 实现推送到前端（qa-start/qa-delta/qa-done/qa-error）。
+//! AppHandle 实现推送到前端（qa-start/qa-delta/qa-done/qa-error）；qa-done
+//! 与 AskOutcome 都带 vector_used，供前端标注降级检索。
 
 use std::path::Path;
 
@@ -69,13 +70,15 @@ pub struct Message {
 pub struct AskOutcome {
     pub conversation_id: String,
     pub sources: Vec<SourceRef>,
+    /// 本次检索是否使用了向量腿（false = 仅全文检索，引用可能不完整）。
+    pub vector_used: bool,
 }
 
 /// 事件回调（命令层用 AppHandle 实现，测试用捕获器）。
 pub trait QaEvents: Send + Sync {
     fn start(&self, conversation_id: &str);
     fn delta(&self, conversation_id: &str, text: &str);
-    fn done(&self, conversation_id: &str, sources: &[SourceRef], message_id: i64);
+    fn done(&self, conversation_id: &str, sources: &[SourceRef], message_id: i64, vector_used: bool);
     fn error(&self, conversation_id: &str, message: &str);
 }
 
@@ -112,7 +115,9 @@ pub fn qa_ask_service(
     insert_message(&conn, &conversation_id, "user", question, None)?;
     touch_conversation(&conn, &conversation_id)?;
 
-    let hits = search::search_documents(vault, question, CONTEXT_HITS, model)?;
+    let retrieval = search::search_documents(vault, question, CONTEXT_HITS, model)?;
+    let vector_used = retrieval.vector_used;
+    let hits = retrieval.hits;
     let sources: Vec<SourceRef> = hits
         .iter()
         .map(|hit| SourceRef {
@@ -139,10 +144,11 @@ pub fn qa_ask_service(
     let sources_json = serde_json::to_string(&sources).map_err(|e| format!("序列化引用失败: {e}"))?;
     let message_id = insert_message(&conn, &conversation_id, "assistant", &answer, Some(&sources_json))?;
     touch_conversation(&conn, &conversation_id)?;
-    events.done(&conversation_id, &sources, message_id);
+    events.done(&conversation_id, &sources, message_id, vector_used);
     Ok(AskOutcome {
         conversation_id,
         sources,
+        vector_used,
     })
 }
 
@@ -373,6 +379,19 @@ mod tests {
         indexer::index_documents(tmp.path(), &["a".to_string()], &model, "fake").unwrap();
     }
 
+    /// 恒定失败的 fake embedding（问答侧降级路径）。
+    struct FailingEmbedding;
+
+    impl EmbeddingModel for FailingEmbedding {
+        fn dimension(&self) -> usize {
+            4
+        }
+
+        fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Err("模型炸了".to_string())
+        }
+    }
+
     /// 确定性流式 fake：按预设 delta 序列回调并记录收到的 prompt。
     struct FakeStreamClient {
         deltas: Vec<String>,
@@ -436,8 +455,11 @@ mod tests {
             self.push(&format!("delta:{conversation_id}:{text}"));
         }
 
-        fn done(&self, conversation_id: &str, sources: &[SourceRef], message_id: i64) {
-            self.push(&format!("done:{conversation_id}:{}:{message_id}", sources.len()));
+        fn done(&self, conversation_id: &str, sources: &[SourceRef], message_id: i64, vector_used: bool) {
+            self.push(&format!(
+                "done:{conversation_id}:{}:{message_id}:{vector_used}",
+                sources.len()
+            ));
         }
 
         fn error(&self, conversation_id: &str, message: &str) {
@@ -454,6 +476,7 @@ mod tests {
         let model = FakeEmbedding { dimension: 4 };
 
         let outcome = qa_ask_service(tmp.path(), &events, "服务拆分要注意什么？", None, &client, Some(&model)).unwrap();
+        assert!(outcome.vector_used);
 
         // 事件序列：start → delta*2 → done
         let log = events.log.lock().unwrap();
@@ -483,6 +506,32 @@ mod tests {
         assert!(prompt.contains("服务拆分要注意什么？"));
         assert!(!prompt.contains("{context}"));
         assert!(!prompt.contains("{question}"));
+    }
+
+    /// 回归：问答复用检索的降级语义，embedding 失败时必须标记 vector_used=false，
+    /// 且 qa-done 事件同步携带该状态，不能让回答看起来像健康的混合检索。
+    #[test]
+    fn test_ask_marks_degraded_retrieval_when_embedding_fails() {
+        let tmp = setup();
+        index_fixture(&tmp);
+        let events = CapturedEvents::default();
+        let failing = FailingEmbedding;
+
+        let outcome = qa_ask_service(
+            tmp.path(),
+            &events,
+            "业务边界",
+            None,
+            &FakeStreamClient::new(&["仅全文检索的回答"]),
+            Some(&failing),
+        )
+        .unwrap();
+
+        assert!(!outcome.vector_used);
+        // FTS 仍返回引用，但状态必须标明向量腿缺席
+        assert!(!outcome.sources.is_empty());
+        let log = events.log.lock().unwrap();
+        assert!(log.iter().any(|event| event.ends_with(":false")));
     }
 
     #[test]
